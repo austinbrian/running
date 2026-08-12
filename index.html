@@ -7,6 +7,7 @@
   <meta name="description" content="Strava running data, updated daily.">
   <link rel="icon" type="image/x-icon" href="https://austinbrian.github.io/favicon.ico">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bitter:400,700,400italic&display=swap">
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
   <link rel="stylesheet" href="assets/dashboard.css">
 </head>
 <body>
@@ -14,9 +15,20 @@
   <header class="site-header">
     <div class="wrapper">
       <a class="site-title" href="https://austinbrian.github.io/">Brian Austin</a>
+      <!-- Mirrors the nav in austinbrian.github.io/_data/navigation.yml and
+           _includes/header.html. Keep the two in sync. -->
       <nav class="site-nav">
-        <a class="page-link" href="https://austinbrian.github.io/writing/">Writing</a>
         <a class="page-link" href="https://austinbrian.github.io/about/">About</a>
+        <a class="page-link" href="https://austinbrian.github.io/writing/">Writing</a>
+        <span class="dropdown">
+          <button type="button" class="page-link dropdown-toggle" aria-haspopup="true">More</button>
+          <div class="dropdown-menu">
+            <a class="page-link" href="https://austinbrian.github.io/running/">Running</a>
+            <a class="page-link" href="https://austinbrian.github.io/archives/">Archives</a>
+          </div>
+        </span>
+        <a class="page-link" href="https://www.linkedin.com/in/briandaustin/"><i class="fa fa-linkedin"></i></a>
+        <a class="page-link" href="https://www.github.com/austinbrian"><i class="fa fa-github"></i></a>
       </nav>
     </div>
   </header>

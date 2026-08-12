@@ -20,6 +20,17 @@ from botocore.exceptions import ClientError
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+REQUIRED_VARS = [
+    "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN",
+    "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
+]
+_missing = [name for name in REQUIRED_VARS if not os.environ.get(name)]
+if _missing:
+    raise SystemExit(
+        "Missing required environment variables: " + ", ".join(_missing) + ".\n"
+        "R2 credentials come from an R2 API token with Object Read & Write; see README."
+    )
+
 STRAVA_CLIENT_ID = os.environ["STRAVA_CLIENT_ID"]
 STRAVA_CLIENT_SECRET = os.environ["STRAVA_CLIENT_SECRET"]
 STRAVA_REFRESH_TOKEN = os.environ["STRAVA_REFRESH_TOKEN"]
@@ -27,7 +38,7 @@ STRAVA_REFRESH_TOKEN = os.environ["STRAVA_REFRESH_TOKEN"]
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
 R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
-R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "strava-data")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME") or "strava-data"
 R2_KEY = "activities.json"
 
 METERS_TO_MILES = 0.000621371

@@ -88,8 +88,8 @@ async function loadActivities() {
     console.log(`Loaded ${allActivities.length} activities`);
     if (!allActivities.length) {
       document.getElementById('dashboard-content').innerHTML =
-        '<p class="empty">No runs synced yet. The daily job populates ' +
-        '<code>data/activities.json</code> once the Strava API app is active.</p>';
+        '<p class="empty">No runs synced yet. The daily job writes ' +
+        '<code>activities.json</code> to R2 once the Strava API app is active.</p>';
       return;
     }
     initializeDashboard();

@@ -107,7 +107,9 @@
 
   <script src="https://cdn.plot.ly/plotly-2.35.3.min.js"></script>
   <script>
-    const DATA_URL = 'data/activities.json';
+    // Public R2 object written by the daily sync workflow. No run data lives in
+    // this repo; see README for the bucket and CORS setup.
+    const DATA_URL = 'https://pub-0894dbef034948d8881890a14025ac52.r2.dev/activities.json';
   </script>
   <script src="assets/running-dashboard.js"></script>
 

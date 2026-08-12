@@ -1,21 +1,21 @@
-"""Sync Strava running activities into data/activities.json.
+"""Sync Strava running activities to a Cloudflare R2 bucket as JSON.
 
-Reads the committed JSON, fetches anything newer from the Strava API, merges and
-deduplicates by activity id, then writes the file back. The workflow commits the
-result, and GitHub Pages serves it same-origin to the dashboard.
-
-Uses only the standard library so the workflow needs no dependency install.
+Downloads the existing activities.json from R2, fetches anything newer from the
+Strava API, merges and deduplicates by activity id, then uploads it back. The
+dashboard fetches that object directly, so no run data is stored in this repo.
 """
 
 import json
 import logging
 import os
-import pathlib
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
+
+import boto3
+from botocore.exceptions import ClientError
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,7 +24,11 @@ STRAVA_CLIENT_ID = os.environ["STRAVA_CLIENT_ID"]
 STRAVA_CLIENT_SECRET = os.environ["STRAVA_CLIENT_SECRET"]
 STRAVA_REFRESH_TOKEN = os.environ["STRAVA_REFRESH_TOKEN"]
 
-DATA_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "activities.json"
+R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
+R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
+R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "strava-data")
+R2_KEY = "activities.json"
 
 METERS_TO_MILES = 0.000621371
 METERS_TO_FEET = 3.28084
@@ -36,24 +40,39 @@ ACTIVITY_FIELDS = [
 ]
 
 
-def read_existing() -> list[dict]:
-    """Read the committed activities file, tolerating a missing or empty file."""
-    if not DATA_PATH.exists():
-        logger.info("No existing activities file, starting fresh")
-        return []
+def get_r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name="auto",
+    )
+
+
+def download_existing(client) -> list[dict]:
+    """Read the current activities.json out of R2, tolerating a first run."""
     try:
-        data = json.loads(DATA_PATH.read_text() or "[]")
-    except json.JSONDecodeError:
-        logger.warning("activities.json is not valid JSON, starting fresh")
-        return []
-    logger.info(f"Read {len(data)} existing activities")
+        response = client.get_object(Bucket=R2_BUCKET_NAME, Key=R2_KEY)
+    except ClientError as error:
+        if error.response["Error"]["Code"] in ("404", "NoSuchKey"):
+            logger.info("No existing activities in R2, starting fresh")
+            return []
+        raise
+    data = json.loads(response["Body"].read() or "[]")
+    logger.info(f"Downloaded {len(data)} existing activities from R2")
     return data
 
 
-def write_activities(activities: list[dict]) -> None:
-    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DATA_PATH.write_text(json.dumps(activities, indent=1, default=str) + "\n")
-    logger.info(f"Wrote {len(activities)} activities to {DATA_PATH}")
+def upload_activities(client, activities: list[dict]) -> None:
+    client.put_object(
+        Bucket=R2_BUCKET_NAME,
+        Key=R2_KEY,
+        Body=json.dumps(activities, default=str),
+        ContentType="application/json",
+        CacheControl="public, max-age=1800",
+    )
+    logger.info(f"Uploaded {len(activities)} activities to R2")
 
 
 def get_access_token() -> str:
@@ -154,7 +173,8 @@ def get_latest_timestamp(activities: list[dict]) -> int | None:
 
 
 def main() -> None:
-    existing = read_existing()
+    r2 = get_r2_client()
+    existing = download_existing(r2)
     after = get_latest_timestamp(existing)
     if after:
         logger.info(f"Fetching activities after timestamp {after}")
@@ -174,7 +194,7 @@ def main() -> None:
     merged.sort(key=lambda a: a.get("start_date", ""), reverse=True)
 
     logger.info(f"Total: {len(merged)} runs ({len(merged) - len(existing)} new)")
-    write_activities(merged)
+    upload_activities(r2, merged)
     logger.info("Sync complete")
 
 

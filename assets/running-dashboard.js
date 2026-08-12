@@ -162,7 +162,9 @@ function bindEvents() {
     applyQuickRange(e.target.value, 'runs-start', 'runs-end');
     renderWeeklyRuns();
   });
-  document.getElementById('size-by-toggle')?.addEventListener('change', renderWeeklyRuns);
+  // These are radio groups, not a single element — bind every input in the group.
+  document.querySelectorAll('input[name="size-by"]')
+    .forEach(input => input.addEventListener('change', renderWeeklyRuns));
 
   // Pace controls
   document.getElementById('pace-start')?.addEventListener('change', renderPaceAnalysis);
@@ -171,7 +173,8 @@ function bindEvents() {
     applyQuickRange(e.target.value, 'pace-start', 'pace-end');
     renderPaceAnalysis();
   });
-  document.getElementById('pace-x-axis-toggle')?.addEventListener('change', renderPaceAnalysis);
+  document.querySelectorAll('input[name="pace-x-axis"]')
+    .forEach(input => input.addEventListener('change', renderPaceAnalysis));
 }
 
 function applyQuickRange(value, startId, endId) {

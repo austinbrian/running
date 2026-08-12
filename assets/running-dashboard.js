@@ -105,11 +105,14 @@ async function loadActivities() {
 function initializeDashboard() {
   const now = new Date();
   const yearStart = `${now.getFullYear()}-01-01`;
+  const yearEnd = `${now.getFullYear()}-12-31`;
   const today = toISODate(now);
 
-  // Set default date ranges
+  // The cumulative tab runs year-to-date against an annual target, so its end
+  // date is the end of the year. Ending it today would leave no remaining
+  // period, which zeroes out the pace-to-target figures.
   setDateInputValue('cumulative-start', yearStart);
-  setDateInputValue('cumulative-end', today);
+  setDateInputValue('cumulative-end', yearEnd);
   setDateInputValue('runs-start', yearStart);
   setDateInputValue('runs-end', today);
   setDateInputValue('pace-start', yearStart);

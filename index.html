@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Running — Brian Austin</title>
+  <meta name="description" content="Strava running data, updated daily.">
+  <link rel="icon" type="image/x-icon" href="https://austinbrian.github.io/favicon.ico">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bitter:400,700,400italic&display=swap">
+  <link rel="stylesheet" href="assets/dashboard.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="wrapper">
+      <a class="site-title" href="https://austinbrian.github.io/">Brian Austin</a>
+      <nav class="site-nav">
+        <a class="page-link" href="https://austinbrian.github.io/writing/">Writing</a>
+        <a class="page-link" href="https://austinbrian.github.io/about/">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="running-dashboard">
+    <h1>Running</h1>
+    <p class="subtitle">Strava running data, synced daily.</p>
+
+    <div class="tab-nav">
+      <button class="tab-btn active" data-tab="cumulative">Cumulative Data</button>
+      <button class="tab-btn" data-tab="runs">Individual Runs</button>
+      <button class="tab-btn" data-tab="pace">Pace Analysis</button>
+    </div>
+
+    <div id="dashboard-content">
+
+      <!-- Tab 1: Cumulative Data -->
+      <div class="tab-panel" data-tab="cumulative">
+        <div class="controls">
+          <label>Start: <input type="date" id="cumulative-start"></label>
+          <label>End: <input type="date" id="cumulative-end"></label>
+          <label>Target:
+            <input type="range" id="target-slider" min="0" max="8000" step="500" value="1000">
+            <span id="target-value">1,000</span> miles
+          </label>
+        </div>
+        <div id="info-boxes" class="info-boxes"></div>
+        <div id="cumulative-chart" class="chart-container"></div>
+      </div>
+
+      <!-- Tab 2: Individual Runs -->
+      <div class="tab-panel" data-tab="runs" style="display:none">
+        <div class="controls">
+          <label>Start: <input type="date" id="runs-start"></label>
+          <label>End: <input type="date" id="runs-end"></label>
+          <label>Quick:
+            <select id="runs-quick-range">
+              <option value="">--</option>
+              <option value="ytd" selected>Year to Date</option>
+              <option value="1y">Last 1 Year</option>
+              <option value="2y">Last 2 Years</option>
+              <option value="2020">Since 2020</option>
+            </select>
+          </label>
+          <label class="radio-group">
+            Size by:
+            <label><input type="radio" name="size-by" value="distance" checked> Distance</label>
+            <label><input type="radio" name="size-by" value="elevation"> Elevation</label>
+          </label>
+        </div>
+        <div id="weekly-runs-container"></div>
+      </div>
+
+      <!-- Tab 3: Pace Analysis -->
+      <div class="tab-panel" data-tab="pace" style="display:none">
+        <div class="controls">
+          <label>Start: <input type="date" id="pace-start"></label>
+          <label>End: <input type="date" id="pace-end"></label>
+          <label>Quick:
+            <select id="pace-quick-range">
+              <option value="">--</option>
+              <option value="ytd" selected>Year to Date</option>
+              <option value="1y">Last 1 Year</option>
+              <option value="2y">Last 2 Years</option>
+              <option value="2020">Since 2020</option>
+            </select>
+          </label>
+          <label class="radio-group">
+            X-axis:
+            <label><input type="radio" name="pace-x-axis" value="distance" checked> Distance</label>
+            <label><input type="radio" name="pace-x-axis" value="date"> Date</label>
+          </label>
+        </div>
+        <div id="pace-chart" class="chart-container"></div>
+        <div id="pace-distribution" class="chart-container"></div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrapper">
+      Data from <a href="https://www.strava.com/">Strava</a> ·
+      <a href="https://github.com/austinbrian/running">source</a> ·
+      &copy; Brian Austin
+    </div>
+  </footer>
+
+  <script src="https://cdn.plot.ly/plotly-2.35.3.min.js"></script>
+  <script>
+    const DATA_URL = 'data/activities.json';
+  </script>
+  <script src="assets/running-dashboard.js"></script>
+
+</body>
+</html>

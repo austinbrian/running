@@ -797,16 +797,22 @@ async function renderTraining() {
   const weekNow = Math.floor((parseDate(today).getTime() - startMs) / (7 * 86400000)) + 1;
   const currentWeek = Math.min(Math.max(weekNow, 1), plan.weeks);
 
-  // Longest run so far during the plan+base period
-  let longestSoFar = 0;
+  // The plan is written in minutes, so report in minutes. Miles are the wrong
+  // unit here — a 9-mile run and a 90-minute run are different instructions.
+  let longestSoFar = 0, baseMi = 0, baseMin = 0;
   allActivities.forEach(a => {
     const d = (a.start_date_local || a.start_date || '').slice(0, 10);
-    if (d >= '2026-05-11' && d <= today) longestSoFar = Math.max(longestSoFar, a.distance_miles || 0);
+    if (d >= '2026-05-11' && d <= today) {
+      longestSoFar = Math.max(longestSoFar, a.moving_time_minutes || 0);
+      baseMi += a.distance_miles || 0;
+      baseMin += a.moving_time_minutes || 0;
+    }
   });
+  const racePaceMin = baseMi > 0 ? (baseMin / baseMi) * plan.race_distance_miles : null;
 
   const thisWeek = plan.workouts.filter(w => w.week === currentWeek);
   const longThis = thisWeek.find(w => w.type.includes('Long'));
-  const pct = Math.min(100, Math.round((longestSoFar / plan.race_distance_miles) * 100));
+  const pct = racePaceMin ? Math.min(100, Math.round((longestSoFar / racePaceMin) * 100)) : 0;
 
   document.getElementById('training-status').innerHTML = `
     <div class="info-box">
@@ -820,7 +826,8 @@ async function renderTraining() {
     </div>
     <div class="info-box">
       <h4>Longest run so far</h4>
-      <p><strong>${longestSoFar.toFixed(1)}</strong> mi &middot; ${pct}% of ${plan.race_distance_miles}</p>
+      <p><strong>${Math.round(longestSoFar)}</strong> min &middot; ${pct}% of race effort${
+        racePaceMin ? ` (~${Math.round(racePaceMin)} min)` : ''}</p>
     </div>
     <div class="info-box">
       <h4>This week&rsquo;s long run</h4>
@@ -923,30 +930,48 @@ function renderLongRunChart(plan, byDate, today) {
 }
 
 function renderTrainingVolume(plan, byDate, today) {
-  const weeks = [], miles = [], planned = [];
+  const weeks = [], mins = [], partial = [], base = [], span = [];
   for (let w = 1; w <= plan.weeks; w++) {
     const days = plan.workouts.filter(x => x.week === w);
     weeks.push(`W${w}`);
-    let mi = 0, anyPast = false;
+
+    let total = 0, elapsed = 0;
     days.forEach(d => {
-      if (d.date <= today) anyPast = true;
-      (byDate[d.date] || []).forEach(r => { if (d.date <= today) mi += r.distance_miles || 0; });
+      if (d.date <= today) {
+        elapsed++;
+        (byDate[d.date] || []).forEach(r => { total += r.moving_time_minutes || 0; });
+      }
     });
-    miles.push(anyPast ? mi : null);
-    planned.push(days.filter(d => RUN_TYPES.has(d.type)).length);
+    // A week still in progress cannot be compared to a weekly target — plotting
+    // Monday's partial as if it were the week's total reads as a collapse.
+    if (elapsed === 0) { mins.push(null); partial.push(null); }
+    else if (elapsed < 7) { mins.push(null); partial.push(Math.round(total)); }
+    else { mins.push(Math.round(total)); partial.push(null); }
+
+    // The plan's weekly ask, summed from its per-session ranges.
+    const lo = days.reduce((t, d) => t + d.min_minutes, 0);
+    const hi = days.reduce((t, d) => t + d.max_minutes, 0);
+    base.push(lo);
+    span.push(hi - lo);
   }
 
   Plotly.newPlot('training-volume', [
-    { x: weeks, y: miles, type: 'bar', name: 'miles run',
-      marker: { color: STRAVA_ORANGE }, hovertemplate: '%{y:.1f} mi<extra></extra>' },
-    { x: weeks, y: planned, type: 'scatter', mode: 'lines+markers', name: 'planned run days',
-      yaxis: 'y2', line: { color: BURNT_ORANGE, width: 2, dash: 'dot' },
-      hovertemplate: '%{y} days<extra>planned</extra>' },
+    { x: weeks, y: span, base: base, type: 'bar', name: 'plan target range',
+      marker: { color: 'rgba(252,76,2,0.22)', line: { color: 'rgba(252,76,2,0.45)', width: 1 } },
+      hovertemplate: '%{base}–%{customdata} min<extra>plan</extra>',
+      customdata: base.map((b, i) => b + span[i]) },
+    { x: weeks, y: mins, type: 'scatter', mode: 'lines+markers', name: 'minutes run',
+      connectgaps: false, line: { color: STRAVA_ORANGE, width: 2 },
+      marker: { size: 9, color: STRAVA_ORANGE },
+      hovertemplate: '%{y} min<extra>completed week</extra>' },
+    { x: weeks, y: partial, type: 'scatter', mode: 'markers', name: 'this week so far',
+      marker: { size: 11, color: 'white', symbol: 'circle',
+                line: { color: STRAVA_ORANGE, width: 2 } },
+      hovertemplate: '%{y} min so far<extra>week in progress</extra>' },
   ], Object.assign({}, PLOTLY_LAYOUT_BASE, {
-    yaxis: { title: 'miles' },
-    yaxis2: { title: 'run days', overlaying: 'y', side: 'right', range: [0, 7], dtick: 1 },
+    yaxis: { title: 'minutes per week', rangemode: 'tozero' },
     legend: { orientation: 'h', y: -0.18 },
-    margin: { t: 20, r: 55, b: 60, l: 55 },
-    height: 300,
+    margin: { t: 20, r: 20, b: 60, l: 60 },
+    height: 320,
   }), PLOTLY_CONFIG);
 }

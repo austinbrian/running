@@ -25,6 +25,7 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 // ── State ──────────────────────────────────────────────────────────────────────
 
 let allActivities = [];
+let trainingPlan = null;
 let currentTab = 'cumulative';
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -207,6 +208,9 @@ function renderCurrentTab() {
   });
 
   switch (currentTab) {
+    case 'training':
+      renderTraining();
+      break;
     case 'cumulative':
       renderCumulative();
       break;
@@ -744,3 +748,205 @@ function renderPaceDistribution(activities, xAxisType) {
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', loadActivities);
+
+// ── Training Plan ──────────────────────────────────────────────────────────────
+//
+// Overlays the McMillan half-marathon plan on actual Strava runs. The plan is a
+// static file written by half-marathon/build_plan.py; nothing here mutates it.
+
+// Static site content, not run data — data/ is gitignored for the R2 sync.
+const PLAN_URL = 'assets/training-plan.json';
+const RUN_TYPES = new Set(['Easy Run', 'Long Run', 'Tempo Intervals', 'Fast Finish Long Run',
+                           'Fartlek Run', 'Progression Run', 'Cruise Intervals', 'Race Day']);
+
+async function loadTrainingPlan() {
+  if (trainingPlan) return trainingPlan;
+  const res = await fetch(PLAN_URL);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  trainingPlan = await res.json();
+  return trainingPlan;
+}
+
+function activitiesByDate() {
+  const map = {};
+  allActivities.forEach(a => {
+    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    if (!d) return;
+    (map[d] = map[d] || []).push(a);
+  });
+  return map;
+}
+
+async function renderTraining() {
+  let plan;
+  try {
+    plan = await loadTrainingPlan();
+  } catch (e) {
+    document.getElementById('training-status').innerHTML =
+      '<p class="error">Could not load the training plan.</p>';
+    return;
+  }
+
+  const byDate = activitiesByDate();
+  const today = toISODate(new Date());
+  const raceDate = plan.race_date;
+  const daysToRace = Math.round((parseDate(raceDate) - parseDate(today)) / 86400000);
+
+  // Which plan week are we in?
+  const startMs = parseDate(plan.plan_start).getTime();
+  const weekNow = Math.floor((parseDate(today).getTime() - startMs) / (7 * 86400000)) + 1;
+  const currentWeek = Math.min(Math.max(weekNow, 1), plan.weeks);
+
+  // Longest run so far during the plan+base period
+  let longestSoFar = 0;
+  allActivities.forEach(a => {
+    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    if (d >= '2026-05-11' && d <= today) longestSoFar = Math.max(longestSoFar, a.distance_miles || 0);
+  });
+
+  const thisWeek = plan.workouts.filter(w => w.week === currentWeek);
+  const longThis = thisWeek.find(w => w.type.includes('Long'));
+  const pct = Math.min(100, Math.round((longestSoFar / plan.race_distance_miles) * 100));
+
+  document.getElementById('training-status').innerHTML = `
+    <div class="info-box">
+      <h4>Race day</h4>
+      <p><strong>${daysToRace}</strong> days &middot; ${new Date(raceDate + 'T12:00:00')
+        .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
+    </div>
+    <div class="info-box">
+      <h4>Plan week</h4>
+      <p><strong>${currentWeek}</strong> of ${plan.weeks}</p>
+    </div>
+    <div class="info-box">
+      <h4>Longest run so far</h4>
+      <p><strong>${longestSoFar.toFixed(1)}</strong> mi &middot; ${pct}% of ${plan.race_distance_miles}</p>
+    </div>
+    <div class="info-box">
+      <h4>This week&rsquo;s long run</h4>
+      <p><strong>${longThis ? longThis.duration : '&mdash;'}</strong></p>
+    </div>`;
+
+  document.getElementById('training-week-note').textContent =
+    `${plan.plan_name} — week ${currentWeek}. Planned sessions against what Strava recorded.`;
+
+  // Day-by-day table for the current week
+  const rows = thisWeek.map(w => {
+    const runs = byDate[w.date] || [];
+    const mins = runs.reduce((t, r) => t + (r.moving_time_minutes || 0), 0);
+    const miles = runs.reduce((t, r) => t + (r.distance_miles || 0), 0);
+    const isRest = w.type === 'Rest Day';
+    const past = w.date < today, isToday = w.date === today;
+
+    let state = 'pending', label = '';
+    if (runs.length) {
+      state = isRest ? 'extra' : 'done';
+      label = `${miles.toFixed(1)} mi &middot; ${Math.round(mins)} min`;
+    } else if (isRest) {
+      state = 'rest'; label = 'rest';
+    } else if (past) {
+      state = 'missed'; label = 'no run recorded';
+    } else {
+      label = 'upcoming';
+    }
+    return `
+      <div class="training-day ${state}${isToday ? ' today' : ''}">
+        <div class="td-day">${w.day_name.slice(0, 3)} <span>${w.date.slice(8)}</span></div>
+        <div class="td-plan"><strong>${w.type}</strong>${w.duration ? ' &middot; ' + w.duration : ''}</div>
+        <div class="td-actual">${label}</div>
+      </div>`;
+  }).join('');
+  document.getElementById('training-week').innerHTML = rows;
+
+  renderLongRunChart(plan, byDate, today);
+  renderTrainingVolume(plan, byDate, today);
+}
+
+function renderLongRunChart(plan, byDate, today) {
+  const weeks = [], base = [], span = [], actual = [];
+  for (let w = 1; w <= plan.weeks; w++) {
+    const days = plan.workouts.filter(x => x.week === w);
+    const long = days.find(x => x.type.includes('Long'));
+    weeks.push(`W${w}`);
+    // One floating bar per week (base = plan minimum, height = the range) reads as a
+    // single band. Stacking two traces made the legend claim two separate series.
+    base.push(long ? long.min_minutes : 0);
+    span.push(long ? long.max_minutes - long.min_minutes : 0);
+
+    let best = 0;
+    days.forEach(d => (byDate[d.date] || []).forEach(r => {
+      if (d.date <= today) best = Math.max(best, r.moving_time_minutes || 0);
+    }));
+    actual.push(best || null);
+  }
+
+  // Race-day effort at recent average pace, for scale.
+  let mi = 0, mins = 0;
+  allActivities.forEach(a => {
+    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    if (d >= '2026-06-01' && d <= today) { mi += a.distance_miles || 0; mins += a.moving_time_minutes || 0; }
+  });
+  const racePaceMin = mi > 0 ? (mins / mi) * plan.race_distance_miles : null;
+
+  const traces = [
+    { x: weeks, y: span, base: base, type: 'bar', name: 'plan target range',
+      marker: { color: 'rgba(252,76,2,0.30)', line: { color: 'rgba(252,76,2,0.55)', width: 1 } },
+      hovertemplate: '%{base}–%{customdata} min<extra>plan</extra>',
+      customdata: base.map((b, i) => b + span[i]) },
+    { x: weeks, y: actual, type: 'scatter', mode: 'lines+markers', name: 'your longest run',
+      connectgaps: false, line: { color: DARK_BLUE, width: 2 },
+      marker: { size: 10, color: DARK_BLUE },
+      hovertemplate: '%{y} min<extra>actual</extra>' },
+  ];
+
+  const layout = Object.assign({}, PLOTLY_LAYOUT_BASE, {
+    yaxis: { title: 'minutes', rangemode: 'tozero' },
+    xaxis: { title: '' },
+    legend: { orientation: 'h', y: -0.18 },
+    margin: { t: 20, r: 20, b: 60, l: 55 },
+    height: 340,
+  });
+
+  if (racePaceMin) {
+    layout.shapes = [{
+      type: 'line', xref: 'paper', x0: 0, x1: 1, y0: racePaceMin, y1: racePaceMin,
+      line: { color: '#999', width: 1, dash: 'dash' },
+    }];
+    layout.annotations = [{
+      xref: 'paper', x: 1, y: racePaceMin, xanchor: 'right', yanchor: 'bottom',
+      text: `13.1 mi at your recent pace ≈ ${Math.round(racePaceMin)} min`,
+      showarrow: false, font: { size: 11, color: '#777' },
+    }];
+  }
+
+  Plotly.newPlot('training-longrun', traces, layout, PLOTLY_CONFIG);
+}
+
+function renderTrainingVolume(plan, byDate, today) {
+  const weeks = [], miles = [], planned = [];
+  for (let w = 1; w <= plan.weeks; w++) {
+    const days = plan.workouts.filter(x => x.week === w);
+    weeks.push(`W${w}`);
+    let mi = 0, anyPast = false;
+    days.forEach(d => {
+      if (d.date <= today) anyPast = true;
+      (byDate[d.date] || []).forEach(r => { if (d.date <= today) mi += r.distance_miles || 0; });
+    });
+    miles.push(anyPast ? mi : null);
+    planned.push(days.filter(d => RUN_TYPES.has(d.type)).length);
+  }
+
+  Plotly.newPlot('training-volume', [
+    { x: weeks, y: miles, type: 'bar', name: 'miles run',
+      marker: { color: STRAVA_ORANGE }, hovertemplate: '%{y:.1f} mi<extra></extra>' },
+    { x: weeks, y: planned, type: 'scatter', mode: 'lines+markers', name: 'planned run days',
+      yaxis: 'y2', line: { color: BURNT_ORANGE, width: 2, dash: 'dot' },
+      hovertemplate: '%{y} days<extra>planned</extra>' },
+  ], Object.assign({}, PLOTLY_LAYOUT_BASE, {
+    yaxis: { title: 'miles' },
+    yaxis2: { title: 'run days', overlaying: 'y', side: 'right', range: [0, 7], dtick: 1 },
+    legend: { orientation: 'h', y: -0.18 },
+    margin: { t: 20, r: 55, b: 60, l: 55 },
+    height: 300,
+  }), PLOTLY_CONFIG);
+}

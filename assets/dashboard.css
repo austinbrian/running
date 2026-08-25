@@ -291,3 +291,54 @@ a:hover { text-decoration: underline; }
   .site-nav .dropdown { margin-left: 0; margin-right: 16px; }
   .site-nav .dropdown-menu { right: auto; left: 0; }
 }
+
+/* ── Training plan ──────────────────────────────────────────────────────────── */
+
+.training-heading {
+  margin: 32px 0 6px;
+  font-size: 18px;
+}
+
+.training-note {
+  margin: 0 0 16px;
+  color: #666;
+  font-size: 14px;
+  max-width: 60ch;
+}
+
+.training-week {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.training-day {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 11rem;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  font-size: 15px;
+}
+
+.training-day .td-day { color: #666; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.training-day .td-day span { color: #999; }
+.training-day .td-actual { text-align: right; color: #666; font-size: 14px; }
+
+/* State is carried by the rail colour, so it reads at a glance without hunting */
+.training-day.done   { border-left-color: #FC4C02; }
+.training-day.done .td-actual { color: #FC4C02; font-weight: bold; }
+.training-day.missed { border-left-color: #c0392b; }
+.training-day.missed .td-actual { color: #c0392b; }
+.training-day.extra  { border-left-color: #E67E22; }
+.training-day.extra .td-actual { color: #E67E22; }
+.training-day.rest   { opacity: .65; }
+.training-day.today  { background: #fff4ef; box-shadow: inset 0 0 0 1px rgba(252,76,2,.35); }
+
+@media (max-width: 640px) {
+  .training-day { grid-template-columns: 4.5rem 1fr; }
+  .training-day .td-actual { grid-column: 2; text-align: left; }
+}

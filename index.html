@@ -41,6 +41,7 @@
       <button class="tab-btn active" data-tab="cumulative">Cumulative Data</button>
       <button class="tab-btn" data-tab="runs">Individual Runs</button>
       <button class="tab-btn" data-tab="pace">Pace Analysis</button>
+      <button class="tab-btn" data-tab="training">Training Plan</button>
     </div>
 
     <div id="dashboard-content">
@@ -106,7 +107,23 @@
         <div id="pace-distribution" class="chart-container"></div>
       </div>
 
-    </div>
+    
+      <!-- Tab 4: Training Plan -->
+      <div class="tab-panel" data-tab="training" style="display:none">
+        <div id="training-status" class="info-boxes"></div>
+        <h3 class="training-heading">This week</h3>
+        <p class="training-note" id="training-week-note"></p>
+        <div id="training-week" class="training-week"></div>
+        <h3 class="training-heading">Long run build</h3>
+        <p class="training-note">
+          The long run is what the plan is really doing &mdash; everything else supports it.
+          Bars are the plan&rsquo;s target range; the line is what you actually ran longest each week.
+        </p>
+        <div id="training-longrun" class="chart-container"></div>
+        <h3 class="training-heading">Weekly volume</h3>
+        <div id="training-volume" class="chart-container"></div>
+      </div>
+</div>
   </main>
 
   <footer class="site-footer">

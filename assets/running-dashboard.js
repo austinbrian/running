@@ -26,6 +26,9 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 
 let allActivities = [];
 let trainingPlan = null;
+// Which plan week the Training Plan tab is showing. Null until first render,
+// then defaults to the current week; clicking the week nav overrides it.
+let trainingWeek = null;
 let currentTab = 'cumulative';
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -176,6 +179,31 @@ function bindEvents() {
   });
   document.querySelectorAll('input[name="pace-x-axis"]')
     .forEach(input => input.addEventListener('change', renderPaceAnalysis));
+
+  // Delegated: the week nav and day rows are re-rendered on every week change,
+  // so binding per-element would leak listeners.
+  document.getElementById('training-weeknav')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-week]');
+    if (!btn || btn.disabled) return;
+    trainingWeek = Number(btn.dataset.week);
+    renderTraining();
+  });
+
+  const weekTable = document.getElementById('training-week');
+  weekTable?.addEventListener('click', (e) => toggleTrainingDay(e.target.closest('.has-detail')));
+  weekTable?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('.has-detail');
+    if (!row) return;
+    e.preventDefault();
+    toggleTrainingDay(row);
+  });
+}
+
+function toggleTrainingDay(row) {
+  if (!row) return;
+  const open = row.classList.toggle('open');
+  row.setAttribute('aria-expanded', String(open));
 }
 
 function applyQuickRange(value, startId, endId) {
@@ -752,7 +780,7 @@ document.addEventListener('DOMContentLoaded', loadActivities);
 // ── Training Plan ──────────────────────────────────────────────────────────────
 //
 // Overlays the McMillan half-marathon plan on actual Strava runs. The plan is a
-// static file written by half-marathon/build_plan.py; nothing here mutates it.
+// static file written by half-marathon/build_site_plan.py; nothing here mutates it.
 
 // Static site content, not run data — data/ is gitignored for the R2 sync.
 const PLAN_URL = 'assets/training-plan.json';
@@ -810,6 +838,9 @@ async function renderTraining() {
   });
   const racePaceMin = baseMi > 0 ? (baseMin / baseMi) * plan.race_distance_miles : null;
 
+  if (trainingWeek === null) trainingWeek = currentWeek;
+  const shownWeek = Math.min(Math.max(trainingWeek, 1), plan.weeks);
+
   const thisWeek = plan.workouts.filter(w => w.week === currentWeek);
   const longThis = thisWeek.find(w => w.type.includes('Long'));
   const pct = racePaceMin ? Math.min(100, Math.round((longestSoFar / racePaceMin) * 100)) : 0;
@@ -834,11 +865,51 @@ async function renderTraining() {
       <p><strong>${longThis ? longThis.duration : '&mdash;'}</strong></p>
     </div>`;
 
-  document.getElementById('training-week-note').textContent =
-    `${plan.plan_name} — week ${currentWeek}. Planned sessions against what Strava recorded.`;
+  renderWeekNav(plan, currentWeek, shownWeek);
+  renderWeekTable(plan, byDate, today, currentWeek, shownWeek);
 
-  // Day-by-day table for the current week
-  const rows = thisWeek.map(w => {
+  renderLongRunChart(plan, byDate, today);
+  renderTrainingVolume(plan, byDate, today);
+}
+
+// The week strip. Marks the current week so jumping away and back is easy, and
+// stays a plain list of buttons so keyboard and screen readers get it for free.
+function renderWeekNav(plan, currentWeek, shownWeek) {
+  const pills = [];
+  for (let w = 1; w <= plan.weeks; w++) {
+    const classes = ['week-pill'];
+    if (w === shownWeek) classes.push('active');
+    if (w === currentWeek) classes.push('current');
+    pills.push(`<button type="button" class="${classes.join(' ')}" data-week="${w}"` +
+      `${w === shownWeek ? ' aria-current="true"' : ''}` +
+      `${w === currentWeek ? ' title="Current week"' : ''}>${w}</button>`);
+  }
+
+  document.getElementById('training-weeknav').innerHTML = `
+    <button type="button" class="week-step" data-week="${shownWeek - 1}"
+      ${shownWeek <= 1 ? 'disabled' : ''} aria-label="Previous week">&lsaquo;</button>
+    <div class="week-pills">${pills.join('')}</div>
+    <button type="button" class="week-step" data-week="${shownWeek + 1}"
+      ${shownWeek >= plan.weeks ? 'disabled' : ''} aria-label="Next week">&rsaquo;</button>
+    <button type="button" class="week-today" data-week="${currentWeek}"
+      ${shownWeek === currentWeek ? 'hidden' : ''}>Today</button>`;
+}
+
+function renderWeekTable(plan, byDate, today, currentWeek, shownWeek) {
+  const week = plan.workouts.filter(w => w.week === shownWeek);
+  const heading = shownWeek === currentWeek ? 'This week'
+    : shownWeek < currentWeek ? `Week ${shownWeek} — done`
+    : `Week ${shownWeek} — ahead`;
+  document.getElementById('training-week-heading').textContent = heading;
+
+  const span = week.length
+    ? `${fmtDay(week[0].date)} – ${fmtDay(week[week.length - 1].date)}`
+    : '';
+  document.getElementById('training-week-note').textContent =
+    `${plan.plan_name} — week ${shownWeek} of ${plan.weeks}${span ? `, ${span}` : ''}. ` +
+    `Planned sessions against what Strava recorded. Tap a day for the full session.`;
+
+  const rows = week.map(w => {
     const runs = byDate[w.date] || [];
     const mins = runs.reduce((t, r) => t + (r.moving_time_minutes || 0), 0);
     const miles = runs.reduce((t, r) => t + (r.distance_miles || 0), 0);
@@ -856,17 +927,34 @@ async function renderTraining() {
     } else {
       label = 'upcoming';
     }
+    // Rest days with nothing but boilerplate are not worth a disclosure triangle
+    const detail = [
+      w.prescription ? `<p class="td-session">${esc(w.prescription)}</p>` : '',
+      w.goal ? `<p class="td-goal">${esc(w.goal)}</p>` : '',
+    ].join('');
+    const expandable = Boolean(detail);
+
     return `
-      <div class="training-day ${state}${isToday ? ' today' : ''}">
+      <div class="training-day ${state}${isToday ? ' today' : ''}${expandable ? ' has-detail' : ''}"
+        ${expandable ? `tabindex="0" role="button" aria-expanded="false"` : ''}>
         <div class="td-day">${w.day_name.slice(0, 3)} <span>${w.date.slice(8)}</span></div>
-        <div class="td-plan"><strong>${w.type}</strong>${w.duration ? ' &middot; ' + w.duration : ''}</div>
+        <div class="td-plan"><strong>${w.type}</strong>${w.duration ? ' &middot; ' + w.duration : ''}${
+          w.prescription ? '<span class="td-flag" title="Structured session">&#9679;</span>' : ''}</div>
         <div class="td-actual">${label}</div>
+        ${expandable ? `<div class="td-detail">${detail}</div>` : ''}
       </div>`;
   }).join('');
   document.getElementById('training-week').innerHTML = rows;
+}
 
-  renderLongRunChart(plan, byDate, today);
-  renderTrainingVolume(plan, byDate, today);
+function fmtDay(iso) {
+  return new Date(iso + 'T12:00:00')
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function esc(str) {
+  return String(str).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 function renderLongRunChart(plan, byDate, today) {

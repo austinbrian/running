@@ -44,6 +44,21 @@ function parseDate(dateStr) {
   return new Date(dateStr);
 }
 
+// Strava sends both a UTC start_date and a start_date_local wall clock, and every
+// calendar question here wants the local one. An 8pm Eastern run is already the
+// next day in UTC, so bucketing by start_date files it under tomorrow — which the
+// training grid then reports as a missed session. Using the local string also
+// makes the page read the same in any viewer's timezone, since a date-time with
+// no offset parses as local wall clock. Records synced before start_date_local
+// was stored fall back to UTC.
+function activityDate(a) {
+  return parseDate(a.start_date_local || a.start_date);
+}
+
+function activityDay(a) {
+  return (a.start_date_local || a.start_date || '').slice(0, 10);
+}
+
 function toISODate(date) {
   return date.toISOString().split('T')[0];
 }
@@ -64,11 +79,15 @@ function getWeekStart(date) {
 }
 
 function filterByDateRange(activities, startDate, endDate) {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  // A date-only string parses as UTC midnight, but setHours() below works in
+  // local time, so a bare new Date('2026-12-31') lands the range end on the 30th
+  // for any viewer west of UTC. Pinning the time makes both ends local, which is
+  // what the date inputs and activityDate() both mean.
+  const start = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
   end.setHours(23, 59, 59, 999);
   return activities.filter(a => {
-    const d = parseDate(a.start_date);
+    const d = activityDate(a);
     return d >= start && d <= end;
   });
 }
@@ -275,11 +294,11 @@ function renderCumulativeChart(activities, startDateStr, endDateStr, target) {
   const dailyMap = {};
   const dayToDate = {};
   activities.forEach(a => {
-    const d = parseDate(a.start_date);
+    const d = activityDate(a);
     const doy = dayOfYear(d, startDate);
     const miles = a.distance_miles || a.distance * 0.000621371;
     dailyMap[doy] = (dailyMap[doy] || 0) + miles;
-    dayToDate[doy] = a.start_date;
+    dayToDate[doy] = activityDay(a);
   });
 
   // Build cumulative series
@@ -292,7 +311,7 @@ function renderCumulativeChart(activities, startDateStr, endDateStr, target) {
     cumulative += dailyMap[doy];
     xActual.push(doy);
     yActual.push(cumulative);
-    textActual.push(dayToDate[doy]?.split('T')[0] || '');
+    textActual.push(dayToDate[doy] || '');
   });
 
   // Target pace line
@@ -375,7 +394,7 @@ function renderInfoBoxes(activities, startDateStr, endDateStr, target) {
     const mins = a.moving_time_minutes || a.moving_time / 60;
     const pace = miles > 0 ? mins / miles : Infinity;
 
-    if (parseDate(a.start_date) > parseDate(lastRun.start_date)) lastRun = a;
+    if (activityDate(a) > activityDate(lastRun)) lastRun = a;
     if (miles > (longestRun.distance_miles || longestRun.distance * 0.000621371)) longestRun = a;
     if (miles >= 1.0 && (!fastestRun || pace < (fastestRun._pace || Infinity))) {
       fastestRun = { ...a, _pace: pace };
@@ -394,7 +413,7 @@ function renderInfoBoxes(activities, startDateStr, endDateStr, target) {
   const fastestMiles = fastestRun ? (fastestRun.distance_miles || fastestRun.distance * 0.000621371) : 0;
 
   // Progress calculations
-  const lastRunDate = parseDate(lastRun.start_date);
+  const lastRunDate = activityDate(lastRun);
   const daysElapsed = Math.floor((lastRunDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
   const totalDays = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
   const daysRemaining = Math.floor((endDate - lastRunDate) / (1000 * 60 * 60 * 24));
@@ -413,9 +432,9 @@ function renderInfoBoxes(activities, startDateStr, endDateStr, target) {
     </div>
     <div class="info-box">
       <h4>Records</h4>
-      <div><b>Last run:</b> ${lastRun.start_date.split('T')[0]}, ${lastRunMiles.toFixed(2)} mi, pace: ${formatPace(lastRunPace)}</div>
-      <div><b>Longest run:</b> ${longestRun.start_date.split('T')[0]}, ${longestMiles.toFixed(2)} mi, pace: ${formatPace(longestPace)}</div>
-      <div><b>Fastest run:</b> ${fastestRun ? `${fastestRun.start_date.split('T')[0]}, ${fastestMiles.toFixed(2)} mi, pace: ${formatPace(fastestPace)}` : 'N/A'}</div>
+      <div><b>Last run:</b> ${activityDay(lastRun)}, ${lastRunMiles.toFixed(2)} mi, pace: ${formatPace(lastRunPace)}</div>
+      <div><b>Longest run:</b> ${activityDay(longestRun)}, ${longestMiles.toFixed(2)} mi, pace: ${formatPace(longestPace)}</div>
+      <div><b>Fastest run:</b> ${fastestRun ? `${activityDay(fastestRun)}, ${fastestMiles.toFixed(2)} mi, pace: ${formatPace(fastestPace)}` : 'N/A'}</div>
     </div>
     <div class="info-box">
       <h4>Progress to Target</h4>
@@ -447,7 +466,7 @@ function renderWeeklyRuns() {
   // Group by week
   const weeks = {};
   filtered.forEach(a => {
-    const d = parseDate(a.start_date);
+    const d = activityDate(a);
     const ws = getWeekStart(d);
     const key = toISODate(ws);
     if (!weeks[key]) weeks[key] = [];
@@ -495,7 +514,7 @@ function renderSingleWeekChart(containerId, weekStart, weekData, sizeBy) {
   const customdata = [null, null, null, null, null, null, null];
 
   weekData.forEach(a => {
-    const d = parseDate(a.start_date);
+    const d = activityDate(a);
     const dow = d.getDay();
     // Convert Sunday=0 to 6, Monday=1 to 0, etc.
     const dayIdx = dow === 0 ? 6 : dow - 1;
@@ -614,7 +633,7 @@ function renderPaceScatter(activities, xAxisType) {
     const pace = miles > 0 ? mins / miles : 0;
     const elev = a.elevation_feet || a.total_elevation_gain * 3.28084;
 
-    xValues.push(xAxisType === 'distance' ? miles : a.start_date);
+    xValues.push(xAxisType === 'distance' ? miles : (a.start_date_local || a.start_date));
     yValues.push(pace);
     markerSizes.push(miles * 2);
     ids.push(a.id);
@@ -622,7 +641,7 @@ function renderPaceScatter(activities, xAxisType) {
       `<b>${a.name}</b><br>` +
       `Distance: ${miles.toFixed(2)} miles<br>` +
       `Pace: ${formatPace(pace)} min/mile<br>` +
-      `Date: ${a.start_date.split('T')[0]}<br>` +
+      `Date: ${activityDay(a)}<br>` +
       `Elevation: ${elev.toFixed(0)} ft`
     );
   });
@@ -734,7 +753,7 @@ function renderPaceDistribution(activities, xAxisType) {
     // Weekly distance totals
     const weeklyMap = {};
     activities.forEach(a => {
-      const d = parseDate(a.start_date);
+      const d = activityDate(a);
       const ws = getWeekStart(d);
       const key = toISODate(ws);
       const miles = a.distance_miles || a.distance * 0.000621371;
@@ -798,7 +817,7 @@ async function loadTrainingPlan() {
 function activitiesByDate() {
   const map = {};
   allActivities.forEach(a => {
-    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    const d = activityDay(a);
     if (!d) return;
     (map[d] = map[d] || []).push(a);
   });
@@ -829,7 +848,7 @@ async function renderTraining() {
   // unit here — a 9-mile run and a 90-minute run are different instructions.
   let longestSoFar = 0, baseMi = 0, baseMin = 0;
   allActivities.forEach(a => {
-    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    const d = activityDay(a);
     if (d >= '2026-05-11' && d <= today) {
       longestSoFar = Math.max(longestSoFar, a.moving_time_minutes || 0);
       baseMi += a.distance_miles || 0;
@@ -978,7 +997,7 @@ function renderLongRunChart(plan, byDate, today) {
   // Race-day effort at recent average pace, for scale.
   let mi = 0, mins = 0;
   allActivities.forEach(a => {
-    const d = (a.start_date_local || a.start_date || '').slice(0, 10);
+    const d = activityDay(a);
     if (d >= '2026-06-01' && d <= today) { mi += a.distance_miles || 0; mins += a.moving_time_minutes || 0; }
   });
   const racePaceMin = mi > 0 ? (mins / mi) * plan.race_distance_miles : null;

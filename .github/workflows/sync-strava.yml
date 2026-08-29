@@ -4,6 +4,14 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC / 1am ET
   workflow_dispatch:
+    inputs:
+      full:
+        description: >-
+          Re-fetch every activity instead of only what is newer. Needed after
+          adding a field to ACTIVITY_FIELDS, since existing records cannot grow
+          one retroactively. Costs about six requests.
+        type: boolean
+        default: false
 
 jobs:
   sync:
@@ -19,7 +27,8 @@ jobs:
         run: pip install boto3
 
       - name: Sync Strava activities to R2
-        run: python scripts/sync_strava.py
+        # inputs is null on the scheduled run, so this renders empty there.
+        run: python scripts/sync_strava.py ${{ inputs.full && '--full' || '' }}
         env:
           STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
           STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}

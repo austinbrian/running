@@ -2,6 +2,7 @@
 .env
 .wrangler/
 __pycache__/
+.venv/
 
 # Run data lives in the R2 bucket, not in this repo. A local copy is kept
 # around as a seed/backup but is never committed.

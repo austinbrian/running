@@ -87,6 +87,23 @@ curl -sI -H "Origin: https://austinbrian.github.io" \
 Run the sync by hand from the Actions tab, or locally with the six variables
 exported.
 
+### Adding a field
+
+`ACTIVITY_FIELDS` in `sync_strava.py` maps each Strava summary field to the
+default used when Strava omits the key or sends an explicit null — the two are
+not distinguishable and both mean "not reported", so they get the same stand-in.
+
+An existing record cannot grow a field retroactively, so after adding one:
+
+```sh
+python scripts/sync_strava.py --full
+```
+
+That ignores the latest-activity timestamp and re-fetches everything. Summaries
+page 200 at a time, so the whole history is about six requests. Records that are
+not re-fetched are still filled with defaults by `normalize()`, so the object
+stays uniform either way and charts never need their own fallbacks.
+
 ## Local preview
 
 ```sh

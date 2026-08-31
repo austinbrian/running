@@ -2,7 +2,10 @@ name: Sync Strava Data
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Daily at 6am UTC / 1am ET
+    # Hourly, and deliberately not on the hour: GitHub queues scheduled runs
+    # and drops them under load, which is worst at :00. Public repos get
+    # unlimited Actions minutes, so frequency costs nothing here.
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       full:

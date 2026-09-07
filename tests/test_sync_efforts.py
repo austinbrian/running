@@ -341,3 +341,24 @@ class TestRetries(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError):
                 sync_efforts.fetch_detail("tok", 15)
         self.assertEqual(urlopen.call_count, 1)
+
+
+class TestTombstones(unittest.TestCase):
+    """A 404 has to be recorded, not just skipped.
+
+    Nothing distinguishes "asked and gone" from "not asked yet" except a record,
+    so without one a deleted activity is re-requested on every future pass and
+    404s again — a request off the daily budget, every run, forever.
+    """
+
+    def test_a_tombstone_is_treated_as_done(self):
+        acts = [activity(1, "2026-08-01T08:00:00Z"), activity(2, "2026-08-02T08:00:00Z")]
+        efforts = [{"id": 1, "missing": True}]
+        done = {r["id"] for r in efforts}
+        self.assertEqual(select_ids(acts, done, "newest", None, 10), [2])
+
+    def test_a_tombstone_carries_no_efforts_to_anchor_on(self):
+        # It has to be inert to everything downstream, not just to selection.
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        import zones  # noqa: E402
+        self.assertIsNone(zones.anchor_from_efforts([{"id": 1, "missing": True}], "2026-08-25"))

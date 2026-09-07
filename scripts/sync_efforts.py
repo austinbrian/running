@@ -432,7 +432,12 @@ def main() -> None:
 
             if detail is not None:
                 by_id[detail["id"]] = distil(detail)
-                fetched_here += 1
+            else:
+                # A tombstone, so a deleted activity is asked about once rather
+                # than on every future pass. Without it a 404 is indistinguishable
+                # from "not yet fetched", and select_ids() picks it again forever.
+                by_id[activity_id] = {"id": activity_id, "missing": True}
+            fetched_here += 1
 
             stopped = limit_reached(limits)
             if stopped:
@@ -470,11 +475,14 @@ def main() -> None:
         logger.info(f"{remaining} remaining; sleeping {sleep_for}s for the next window")
         time.sleep(sleep_for)
 
+    missing = sum(1 for r in by_id.values() if r.get("missing"))
+    distilled = len(by_id) - missing
     with_cadence = sum(1 for r in by_id.values() if r.get("average_cadence"))
     logger.info(
-        f"Done. {fetched_total} fetched this run, {len(by_id)} distilled in total, "
-        f"{len(activities) - len(by_id)} remaining. "
-        f"average_cadence present on {with_cadence}/{len(by_id)}."
+        f"Done. {fetched_total} fetched this run, {distilled} distilled in total, "
+        f"{len(activities) - len(by_id)} remaining"
+        + (f", {missing} gone from Strava" if missing else "") + ". "
+        f"average_cadence present on {with_cadence}/{distilled}."
     )
 
 

@@ -1,0 +1,79 @@
+name: Sync Strava Best Efforts
+
+# Step 2 of .devlog/plans/strava-extraction.md — pull the per-activity analysis
+# Strava computed and never handed over, while the subscription is live.
+#
+# Two modes. The daily schedule keeps efforts.json current as new runs land, a
+# handful of requests at a time. The manual dispatch is the backfill: raise
+# `windows` to work through more of the daily budget in one job.
+
+on:
+  schedule:
+    # 05:47 UTC, deliberately off the hour and clear of the hourly summary sync
+    # at :17. Only ever a few new runs, so one window is plenty.
+    - cron: '47 5 * * *'
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: >-
+          How many 15-minute rate-limit windows to work through, sleeping
+          between them. 1 does a single pass; 10 drains most of a day's budget
+          in one ~2.5h job. Every window uploads before sleeping, so stopping
+          early never loses work.
+        type: string
+        default: '1'
+      order:
+        description: >-
+          newest — serves the zone anchor, which cannot be moved by anything
+          older than about a year. oldest — serves preservation. Switch to
+          oldest the moment cancelling the subscription becomes a live decision.
+        type: choice
+        options: [newest, oldest]
+        default: newest
+      year:
+        description: >-
+          Restrict to one year, e.g. 2021 — the 180 runs that exist in no other
+          source. Leave blank for the whole history.
+        type: string
+        default: ''
+
+jobs:
+  efforts:
+    runs-on: ubuntu-latest
+    # A ten-window backfill sleeps through most of its wall clock. The default
+    # 360-minute cap would kill it mid-job; the per-window upload means that
+    # would be survivable, but there is no reason to invite it.
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install boto3
+
+      - name: Check the distillation logic before spending requests on it
+        run: python -m unittest discover -s tests
+
+      - name: Extract best efforts and splits to R2
+        # Inputs arrive as environment variables rather than being interpolated
+        # into the command, so nothing in them is ever parsed as shell. They are
+        # null on the scheduled run, hence the defaults.
+        env:
+          WINDOWS: ${{ inputs.windows || '1' }}
+          ORDER: ${{ inputs.order || 'newest' }}
+          YEAR: ${{ inputs.year || '' }}
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+        run: |
+          python scripts/sync_efforts.py \
+            --windows "$WINDOWS" \
+            --order "$ORDER" \
+            ${YEAR:+--year "$YEAR"}

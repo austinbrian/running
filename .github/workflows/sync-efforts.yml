@@ -77,3 +77,14 @@ jobs:
             --windows "$WINDOWS" \
             --order "$ORDER" \
             ${YEAR:+--year "$YEAR"}
+
+      - name: Derive pace zones and publish zones.json
+        # Reads activities.json and efforts.json back out of R2 and runs the
+        # single zone engine over both. One implementation, two readers — the
+        # site and the watch app must not disagree about what tempo pace is.
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+        run: python scripts/publish_zones.py

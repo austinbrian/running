@@ -125,7 +125,8 @@ if __name__ == "__main__":
 
 from zones import (  # noqa: E402
     ANCHOR_MIN_WEIGHT, age_weeks, anchor_from_efforts, fit_grade_adjustment,
-    grade_adjusted_pace_s, pace_s, recency_weight,
+    fit_hr_adjustment, grade_adjusted_pace_s, hr_adjusted_pace_s, pace_s,
+    recency_weight,
 )
 
 
@@ -358,3 +359,74 @@ class TestGradeAdjustment(unittest.TestCase):
     def test_no_fit_means_pace_passes_through_unchanged(self):
         run_ = {"distance_miles": 5.0, "moving_time_minutes": 45, "elevation_feet": 500}
         self.assertEqual(grade_adjusted_pace_s(run_, None), pace_s(run_))
+
+
+class TestHrAdjustment(unittest.TestCase):
+    """Pace normalised to a reference heart rate.
+
+    The point is separating fitness from effort: two runs at the same pace and
+    different heart rates were not the same run, and raw pace cannot say so.
+    """
+
+    @staticmethod
+    def log():
+        # Same pace throughout, heart rate drifting up — i.e. the same speed
+        # costing progressively more, which is fitness going backwards.
+        out = []
+        for i in range(40):
+            out.append({
+                "start_date": f"2026-0{6 + i % 3}-{1 + i % 28:02d}T12:00:00Z",
+                "distance_miles": 5.0, "moving_time_minutes": 47.5,
+                "average_heartrate": 140 + (i % 11),
+            })
+        return out
+
+    def test_the_reference_is_the_median_heart_rate(self):
+        # 140..150 cycling over 40 runs: 140-146 land four times each and
+        # 147-150 three times, so the middle pair is 144 and 145.
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        self.assertEqual(fit["reference_bpm"], 144.5)
+        self.assertEqual(fit["runs"], 40)
+
+    def test_a_higher_heart_rate_at_the_same_pace_reads_slower(self):
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        easy = {"distance_miles": 5.0, "moving_time_minutes": 47.5, "average_heartrate": 135}
+        hard = {"distance_miles": 5.0, "moving_time_minutes": 47.5, "average_heartrate": 160}
+        self.assertLess(hr_adjusted_pace_s(easy, fit), pace_s(easy))
+        self.assertGreater(hr_adjusted_pace_s(hard, fit), pace_s(hard))
+
+    def test_a_run_at_the_reference_is_unchanged(self):
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        at_ref = {"distance_miles": 5.0, "moving_time_minutes": 47.5,
+                  "average_heartrate": fit["reference_bpm"]}
+        self.assertAlmostEqual(hr_adjusted_pace_s(at_ref, fit), pace_s(at_ref), places=6)
+
+    def test_it_chains_after_the_grade_correction(self):
+        """Terrain and effort normalised together, not one or the other."""
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        run_ = {"distance_miles": 5.0, "moving_time_minutes": 47.5,
+                "average_heartrate": 160, "elevation_feet": 500}
+        graded = 500.0
+        self.assertAlmostEqual(hr_adjusted_pace_s(run_, fit, base_pace_s=graded),
+                               graded * 160 / fit["reference_bpm"], places=6)
+
+    def test_an_artifact_heart_rate_leaves_the_pace_alone(self):
+        # 35bpm dropouts and 207bpm cadence lock are not heart rates, and a run
+        # carrying one should stay on the chart unadjusted rather than vanish.
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        for bad in (35, 207):
+            run_ = {"distance_miles": 5.0, "moving_time_minutes": 47.5,
+                    "average_heartrate": bad}
+            self.assertEqual(hr_adjusted_pace_s(run_, fit), pace_s(run_))
+
+    def test_a_run_with_no_heart_rate_is_left_alone(self):
+        fit = fit_hr_adjustment(self.log(), TODAY)
+        run_ = {"distance_miles": 5.0, "moving_time_minutes": 47.5}
+        self.assertEqual(hr_adjusted_pace_s(run_, fit), pace_s(run_))
+
+    def test_no_fit_passes_the_pace_through(self):
+        run_ = {"distance_miles": 5.0, "moving_time_minutes": 47.5, "average_heartrate": 160}
+        self.assertEqual(hr_adjusted_pace_s(run_, None), pace_s(run_))
+
+    def test_too_few_runs_with_heart_rate_returns_none(self):
+        self.assertIsNone(fit_hr_adjustment(self.log()[:5], TODAY))

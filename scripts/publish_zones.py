@@ -117,6 +117,7 @@ def build(activities: list[dict], efforts: list[dict], today: str) -> dict:
         # to render without it, and to say so rather than adjusting by nothing
         # and calling the result adjusted.
         "grade": zone_engine.fit_grade_adjustment(activities, today),
+        "hr": zone_engine.fit_hr_adjustment(activities, today),
     }
 
 

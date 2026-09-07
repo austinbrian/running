@@ -96,6 +96,28 @@ GRADE_FIT_MIN_RUNS = 30
 # A run has to be long enough that its gain per mile means something.
 GRADE_FIT_MIN_MILES = 2.0
 
+# ── Heart-rate adjustment ──────────────────────────────────────────────────────
+#
+# Pace normalised to a reference heart rate: what this run would have been at
+# the effort the runner usually gives. It is the one thing average HR is good
+# for here. Between runs, pace and average HR correlate at only -0.15 in this
+# dataset, so neither is much use alone — but their ratio moves coherently, and
+# it separates fitness from effort in a way raw pace cannot. June 2026 reads as
+# an unremarkable 9:32/mi month and a 9:06/mi one once heart rate is divided out.
+#
+# The model is deliberately the crude one: pace scales with heart rate, so
+# pace_ref = pace * hr / hr_ref. Heart-rate *reserve* would be better founded,
+# since HR does not fall to zero at zero speed — but reserve needs a maximum,
+# and this runner's is the least settled number available (zones.py caps at 195
+# as artifact rejection; the Health export shows 74 sustained clusters peaking
+# at 207). A ratio that needs only the mean is worth more than a reserve
+# calculation resting on a number nobody can defend.
+#
+# Reference is the median, for the same reason the grade reference is median
+# terrain: a typical run should come out roughly unchanged.
+HR_REFERENCE_DAYS = 730
+HR_MIN_RUNS = 30
+
 ZoneName = Literal["recovery", "easy", "long_run", "half_marathon", "goal",
                    "tempo_interval", "cruise_interval", "5k_10k"]
 
@@ -392,6 +414,34 @@ def grade_adjusted_pace_s(activity: dict[str, Any], fit: dict[str, Any] | None) 
         return pace
     delta = (gain / miles) - fit["reference_ft_per_mi"]
     return pace - fit["slope_s_per_ft_per_mi"] * delta
+
+
+def fit_hr_adjustment(activities: list[dict], today: str) -> dict[str, Any] | None:
+    """The reference heart rate that pace gets normalised to."""
+    beats = [hr for hr in (clean_hr(a) for a in recent(activities, today, days=HR_REFERENCE_DAYS))
+             if hr]
+    if len(beats) < HR_MIN_RUNS:
+        return None
+    return {"reference_bpm": round(statistics.median(beats), 1), "runs": len(beats)}
+
+
+def hr_adjusted_pace_s(activity: dict[str, Any], fit: dict[str, Any] | None,
+                       base_pace_s: float | None = None) -> float | None:
+    """Pace at the reference heart rate.
+
+    `base_pace_s` lets the caller chain this after the grade correction, so a
+    run can be normalised for terrain and effort together. Defaults to the
+    activity's raw pace.
+
+    Returns the unadjusted pace when the heart rate is missing or an artifact,
+    rather than dropping the run: an unadjusted point is honest, a dropped one
+    silently changes which runs the trend is made of.
+    """
+    pace = base_pace_s if base_pace_s is not None else pace_s(activity)
+    hr = clean_hr(activity)
+    if pace is None or not fit or not hr or not fit.get("reference_bpm"):
+        return pace
+    return pace * hr / fit["reference_bpm"]
 
 
 # ── At-a-glance target feedback ────────────────────────────────────────────────

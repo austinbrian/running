@@ -187,6 +187,22 @@ function gradeAdjustedPaceMin(a) {
   return raw - (fit.slope_s_per_ft_per_mi * delta) / 60;
 }
 
+// Pace at the reference heart rate: what this run would have been at the effort
+// you usually give. Mirrors hr_adjusted_pace_s() in zones.py — the crude ratio
+// rather than heart-rate reserve, because reserve needs an HRmax and that is the
+// least settled number in this dataset.
+//
+// A run with no heart rate, or an artifact one, keeps its unadjusted pace rather
+// than being dropped: an unadjusted point is honest, a missing one quietly
+// changes which runs the trend is made of.
+function hrAdjustedPaceMin(a, basePaceMin) {
+  const base = basePaceMin === undefined ? rawPaceMin(a) : basePaceMin;
+  const fit = zonesDoc && zonesDoc.hr;
+  const hr = a.average_heartrate;
+  if (!fit || !fit.reference_bpm || !hr || hr < 90 || hr > 195) return base;
+  return base * hr / fit.reference_bpm;
+}
+
 function gradeAdjustOn() {
   return Boolean(document.getElementById('pace-grade-adjust')?.checked)
     && Boolean(zonesDoc && zonesDoc.grade);
@@ -783,6 +799,7 @@ function renderPaceAnalysis() {
 
   renderZoneSummary();
   renderPaceScatter(filtered, xAxis);
+  renderEfficiency(filtered);
   renderPaceDistribution(filtered, xAxis);
 }
 
@@ -943,6 +960,103 @@ function renderPaceScatter(activities, xAxisType) {
   Plotly.newPlot('pace-chart', data, layoutFor(layout), PLOTLY_CONFIG).then(chart => {
     openActivityOnClick(chart, point => point.customdata);
   });
+}
+
+// Trailing median over a window of days rather than a count of runs, because
+// the runs are not evenly spaced — a fortnight off would otherwise sit inside
+// the same window as the fortnight before it.
+const EFFICIENCY_WINDOW_DAYS = 42;
+const EFFICIENCY_MIN_SAMPLES = 8;
+
+function quantile(sorted, q) {
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  return sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (pos - lo);
+}
+
+function median(values) {
+  const sorted = [...values].sort((x, y) => x - y);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function renderEfficiency(activities) {
+  const el = document.getElementById('efficiency-chart');
+  if (!el) return;
+  const fit = zonesDoc && zonesDoc.hr;
+  if (!fit) { Plotly.purge(el); el.innerHTML = ''; return; }
+
+  // Terrain first, then effort, so the trend is normalised for both when the
+  // hills toggle is on.
+  const graded = gradeAdjustOn();
+  const points = activities
+    .filter(a => a.average_heartrate)
+    .map(a => ({
+      t: activityDate(a).getTime(),
+      day: activityDay(a),
+      name: a.name,
+      raw: rawPaceMin(a),
+      hr: a.average_heartrate,
+      y: hrAdjustedPaceMin(a, graded ? gradeAdjustedPaceMin(a) : undefined),
+    }))
+    .sort((p, q) => p.t - q.t);
+
+  if (points.length < EFFICIENCY_MIN_SAMPLES) { Plotly.purge(el); el.innerHTML = ''; return; }
+
+  const windowMs = EFFICIENCY_WINDOW_DAYS * 86400000;
+  const trendX = [], trendY = [];
+  points.forEach((point, i) => {
+    const window = [];
+    for (let j = i; j >= 0 && points[j].t >= point.t - windowMs; j--) window.push(points[j].y);
+    if (window.length >= EFFICIENCY_MIN_SAMPLES) {
+      trendX.push(point.day);
+      trendY.push(median(window));
+    }
+  });
+
+  const data = [
+    {
+      type: 'scatter', mode: 'markers', name: 'per run',
+      x: points.map(p => p.day), y: points.map(p => p.y),
+      marker: { size: 6, color: BURNT_ORANGE, opacity: 0.35 },
+      text: points.map(p => `<b>${p.name}</b><br>`
+        + `Actual: ${formatPace(p.raw)}/mi at ${Math.round(p.hr)} bpm<br>`
+        + `At ${fit.reference_bpm} bpm: ${formatPace(p.y)}/mi<br>${p.day}`),
+      hoverinfo: 'text',
+    },
+    {
+      type: 'scatter', mode: 'lines', name: `${EFFICIENCY_WINDOW_DAYS}-day median`,
+      x: trendX, y: trendY,
+      line: { color: DARK_BLUE, width: 2.5 },
+      hovertemplate: '%{y:.2f} min/mi<extra>trend</extra>',
+    },
+  ];
+
+  // A dropped heart rate reads as a spectacular run: 8:55/mi recorded at 116 bpm
+  // adjusts to 7:05/mi, and two of those stretch the axis until the trend is a
+  // flat line in the middle. The floor of 90 bpm cannot catch them, because a
+  // wrong-but-plausible reading is indistinguishable from a real one here.
+  //
+  // So the view is clipped, not the data: the axis covers the middle 96% of
+  // runs, every point is still in the trace, and the trend is legible.
+  const sorted = [...points.map(p => p.y), ...trendY].sort((x, y) => x - y);
+  const lo = quantile(sorted, 0.02), hi = quantile(sorted, 0.98);
+  const pad = Math.max((hi - lo) * 0.08, 0.1);
+
+  const layout = {
+    ...PLOTLY_LAYOUT_BASE,
+    title: 'Aerobic Efficiency',
+    xaxis: { title: '', gridcolor: 'lightgray' },
+    yaxis: {
+      // Descending, so up is faster — matching the pace chart above it.
+      title: `Pace at ${fit.reference_bpm} bpm${graded ? ', hill-adjusted' : ''}`,
+      range: [hi + pad, lo - pad],
+      gridcolor: 'lightgray',
+    },
+    showlegend: true,
+    legend: { orientation: 'h', y: -0.18 },
+  };
+  Plotly.newPlot(el, data, layoutFor(layout), PLOTLY_CONFIG);
 }
 
 function renderPaceDistribution(activities, xAxisType) {

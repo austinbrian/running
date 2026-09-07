@@ -52,6 +52,21 @@ const ZONE_TABLE = [
 
 const PREDICTION_LABELS = { '5k': '5K', '10k': '10K', half: 'Half' };
 
+// Strava's standard best-effort distances, in miles. Mirrors EFFORT_DISTANCES
+// in zones.py, plus the three short ones that module excludes — it will not
+// extrapolate a half marathon from 400m, but they are perfectly good to look at.
+const EFFORT_MILES = {
+  '400m': 0.2485, half_mile: 0.5, '1k': 0.6214, '1mi': 1.0, '2mi': 2.0,
+  '5k': 3.107, '10k': 6.214, '15k': 9.321, '10mi': 10.0, '20k': 12.427,
+  half: 13.109, marathon: 26.219,
+};
+
+const EFFORT_LABELS = {
+  '400m': '400m', half_mile: '½ mile', '1k': '1K', '1mi': '1 mile', '2mi': '2 mile',
+  '5k': '5K', '10k': '10K', '15k': '15K', '10mi': '10 mile', '20k': '20K',
+  half: 'Half', marathon: 'Marathon',
+};
+
 // The plan's vocabulary, mapped to the zone that resolves it. Mirrors the table
 // in .devlog/plans/pace-zones.md. This belongs in training-plan.json as a `zone`
 // key per workout — a property of the plan, not of the renderer — and should
@@ -122,6 +137,10 @@ let allActivities = [];
 // it degrades to the unzoned view rather than failing, because the page has to
 // keep working through the window where the extraction is still running.
 let zonesDoc = null;
+// efforts.json, fetched lazily — see ensureEfforts(). Null until the Best
+// efforts toggle is first used, 'loading' while in flight.
+let effortsById = null;
+let effortsState = 'idle';
 let trainingPlan = null;
 // Which plan week the Training Plan tab is showing. Null until first render,
 // then defaults to the current week; clicking the week nav overrides it.
@@ -383,6 +402,7 @@ function bindEvents() {
     .forEach(input => input.addEventListener('change', renderPaceAnalysis));
   document.getElementById('pace-show-bands')?.addEventListener('change', renderPaceAnalysis);
   document.getElementById('pace-grade-adjust')?.addEventListener('change', renderPaceAnalysis);
+  document.getElementById('pace-best-efforts')?.addEventListener('change', onEffortsToggled);
 
   // Delegated: the week nav and day rows are re-rendered on every week change,
   // so binding per-element would leak listeners.
@@ -787,6 +807,32 @@ function renderSingleWeekChart(containerId, weekStart, weekData, sizeBy) {
 
 // ── Tab 3: Pace Analysis ───────────────────────────────────────────────────────
 
+// Says what the efforts view is standing on, because the backfill is not
+// finished: a range can be partly covered, and silently plotting the covered
+// part is worse than naming it.
+function renderEffortNote(activities) {
+  const el = document.getElementById('effort-note');
+  if (!el) return;
+  if (!effortsOn()) { el.innerHTML = ''; return; }
+  if (effortsState === 'loading') { el.textContent = 'Loading best efforts…'; return; }
+  if (effortsState === 'failed') {
+    el.innerHTML = '<span class="zone-warn">Best efforts could not be loaded.</span>';
+    return;
+  }
+  const { withEfforts, total } = effortCoverage(activities);
+  el.innerHTML = withEfforts === total
+    ? `Segments inside all ${total} runs in this range.`
+    : `<span class="zone-warn">${withEfforts} of ${total} runs</span> in this range have `
+      + `efforts extracted; the rest are still being backfilled and are not plotted.`;
+}
+
+async function onEffortsToggled() {
+  renderEffortNote(filterByDateRange(allActivities,
+    getDateInputValue('pace-start'), getDateInputValue('pace-end')));
+  if (effortsOn()) await ensureEfforts();
+  renderPaceAnalysis();
+}
+
 function renderPaceAnalysis() {
   const startDate = getDateInputValue('pace-start');
   const endDate = getDateInputValue('pace-end');
@@ -798,10 +844,15 @@ function renderPaceAnalysis() {
     .filter(a => (a.distance_miles || a.distance * 0.000621371) >= 1.0);
 
   renderZoneSummary();
-  renderPaceScatter(filtered, xAxis);
+  if (effortsOn() && effortsById) {
+    renderEffortScatter(filtered);
+  } else {
+    renderPaceScatter(filtered, xAxis);
+  }
   renderPaceHistogram(filtered);
   renderEfficiency(filtered);
   renderPaceDistribution(filtered, xAxis);
+  renderEffortNote(filtered);
 }
 
 function bandsOn() {
@@ -989,11 +1040,167 @@ function zoneBandsVertical(loMin, hiMin) {
   });
 }
 
+// ── Best efforts ───────────────────────────────────────────────────────────────
+//
+// A whole-run average hides everything structured inside the run: 2026-06-17
+// averages 8:21/mi and contains a 7:58 mile. These read the segments instead.
+//
+// Worth saying why this is not Strava Segments, which is the obvious place to
+// look. A Segment is a geographic stretch somebody drew on a map, so it exists
+// only where a person made one, matches only when you run that exact ground,
+// and compares you against other people. Best efforts are the fastest stretch
+// of each standard distance *inside a given run*, computed for every run there
+// is. For "how fast did I actually run inside this session", that is the right
+// unit, and it is already extracted.
+
+function effortsOn() {
+  return Boolean(document.getElementById('pace-best-efforts')?.checked);
+}
+
+async function ensureEfforts() {
+  if (effortsById || effortsState === 'loading') return;
+  effortsState = 'loading';
+  try {
+    const response = await fetch(EFFORTS_URL);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const records = await response.json();
+    effortsById = new Map(records.map(r => [r.id, r]));
+    effortsState = 'ready';
+  } catch (error) {
+    console.warn('efforts.json unavailable', error);
+    effortsState = 'failed';
+  }
+}
+
+// One row per (run, distance). A run contributes several, and they are nested —
+// the 5K best contains the 1-mile best — so this is each run's own pace/distance
+// curve rather than a set of independent samples. Fine for a scatter, which is
+// what it is for; not something to average over.
+function effortPoints(activities) {
+  if (!effortsById) return [];
+  const out = [];
+  activities.forEach(a => {
+    const record = effortsById.get(a.id);
+    if (!record || !record.best) return;
+    Object.entries(record.best).forEach(([key, effort]) => {
+      const miles = EFFORT_MILES[key];
+      const seconds = effort && (effort.s || effort.moving_s);
+      if (!miles || !seconds) return;
+      out.push({
+        id: a.id, name: a.name, day: activityDay(a), key, miles, seconds,
+        paceMin: seconds / 60 / miles, pr: effort.pr,
+      });
+    });
+  });
+  return out;
+}
+
+// How much of the current selection actually has efforts extracted. The backfill
+// is incomplete, so a range can be half-covered, and a chart that quietly plots
+// the covered half is worse than one that says which half it is.
+function effortCoverage(activities) {
+  const withEfforts = activities.filter(a => effortsById && effortsById.has(a.id)).length;
+  return { withEfforts, total: activities.length };
+}
+
+function renderEffortScatter(activities) {
+  const points = effortPoints(activities);
+  if (!points.length) {
+    Plotly.newPlot('pace-chart', [], layoutFor({ ...PLOTLY_LAYOUT_BASE,
+      title: 'No extracted efforts in this range' }), PLOTLY_CONFIG);
+    return;
+  }
+
+  // The frontier: fastest at each distance. This is the performance envelope,
+  // and the whole reason the view is interesting — it is invisible in run
+  // averages because no run is run at its own best-effort pace throughout.
+  //
+  // Built from a mile up. Strava's short best efforts carry the same GPS
+  // artifacts gpx_efforts.py had to filter out: the fastest 400m on record is
+  // 0:58 — a 3:53/mi pace, inside a run averaging 9:40/mi — which is a
+  // reacquired signal, not a sprint. The short efforts stay in the cloud
+  // because they are data, but the line reads as a claim and should not be led
+  // by one. zones.py excludes the same distances from anchoring, for the same
+  // reason, so the pace zones are unaffected.
+  const FRONTIER_MIN_MILES = 1.0;
+  const best = new Map();
+  points.forEach(p => {
+    if (p.miles < FRONTIER_MIN_MILES) return;
+    const held = best.get(p.key);
+    if (!held || p.paceMin < held.paceMin) best.set(p.key, p);
+  });
+  const frontier = [...best.values()].sort((a, b) => a.miles - b.miles);
+
+  const sortedPaces = points.map(p => p.paceMin).sort((a, b) => a - b);
+  const fastest = Math.min(quantile(sortedPaces, 0.02),
+                           ...frontier.map(p => p.paceMin));
+  const slowest = quantile(sortedPaces, 0.98);
+
+  const bands = zoneBands();
+  const data = [
+    {
+      type: 'scatter', mode: 'markers', name: 'best effort',
+      x: points.map(p => p.miles), y: points.map(p => p.paceMin),
+      marker: { size: 6, color: BURNT_ORANGE, opacity: 0.4 },
+      customdata: points.map(p => p.id),
+      text: points.map(p => `<b>${p.name}</b><br>`
+        + `${EFFORT_LABELS[p.key] || p.key}: ${formatDuration(p.seconds)}`
+        + ` (${formatPace(p.paceMin)}/mi)<br>${p.day}`
+        + (p.pr === 1 ? '<br><b>all-time best</b>' : '')),
+      hoverinfo: 'text',
+    },
+    {
+      type: 'scatter', mode: 'lines+markers', name: 'your fastest (1mi+)',
+      x: frontier.map(p => p.miles), y: frontier.map(p => p.paceMin),
+      line: { color: DARK_BLUE, width: 2 },
+      marker: { size: 8, color: DARK_BLUE },
+      customdata: frontier.map(p => p.id),
+      text: frontier.map(p => `<b>${EFFORT_LABELS[p.key] || p.key}</b> `
+        + `${formatDuration(p.seconds)} (${formatPace(p.paceMin)}/mi)<br>`
+        + `${p.name}<br>${p.day}`),
+      hoverinfo: 'text',
+    },
+  ];
+
+  const layout = {
+    ...PLOTLY_LAYOUT_BASE,
+    title: 'Best Efforts Within Runs',
+    // Log x, because the distances are 400m to a half marathon — a linear axis
+    // puts two thirds of them in the first inch.
+    xaxis: {
+      title: 'Effort distance (miles)', type: 'log', gridcolor: 'lightgray',
+      tickvals: [0.2485, 0.5, 0.6214, 1, 2, 3.107, 6.214, 13.109],
+      ticktext: ['400m', '½mi', '1K', '1mi', '2mi', '5K', '10K', 'half'],
+    },
+    // Across 400m to a half marathon the honest pace range is wide, and a
+    // walked mile at 16:22 widens it until the zone bands are a single strip.
+    // Keep the whole frontier — its fast end is the point — and clip the slow
+    // tail of the cloud.
+    yaxis: {
+      title: 'Pace (minutes/mile)', gridcolor: 'lightgray',
+      range: [slowest + 0.3, fastest - 0.3],
+    },
+    shapes: bands.shapes,
+    annotations: bands.annotations,
+    legend: { orientation: 'h', y: -0.2 },
+  };
+  Plotly.newPlot('pace-chart', data, layoutFor(layout), PLOTLY_CONFIG).then(chart => {
+    openActivityOnClick(chart, point => point.customdata);
+  });
+}
+
 function renderPaceHistogram(activities) {
   const el = document.getElementById('pace-histogram');
   if (!el) return;
 
-  const paces = activities.map(a => paceMin(a)).filter(p => p > 0 && isFinite(p));
+  // In efforts mode this becomes the fastest mile of each run: still one value
+  // per run, so it stays directly comparable to the whole-run version, and it
+  // is the single most legible slice of the effort data. Plotting every effort
+  // would stack five nested distances into one multi-modal smear.
+  const efforts = effortsOn() && effortsById;
+  const paces = efforts
+    ? effortPoints(activities).filter(p => p.key === '1mi').map(p => p.paceMin)
+    : activities.map(a => paceMin(a)).filter(p => p > 0 && isFinite(p));
   if (paces.length < 5) { Plotly.purge(el); el.innerHTML = ''; return; }
 
   const counts = new Map();
@@ -1003,9 +1210,15 @@ function renderPaceHistogram(activities) {
   });
   const bins = [...counts.keys()].sort((a, b) => a - b);
   const centres = bins.map(b => b + PACE_BIN_MINUTES / 2);
+  const heading = efforts ? 'Fastest Mile In Each Run' : 'Pace Distribution';
 
-  // Whole and half minutes only; every bin edge would be unreadable.
-  const lo = bins[0], hi = bins[bins.length - 1] + PACE_BIN_MINUTES;
+  // Clip the same way: one walked mile at 16:22 otherwise stretches the axis
+  // across a dozen empty bins and squeezes the real distribution into an inch.
+  const ordered = [...paces].sort((a, b) => a - b);
+  const floorTo = v => Math.floor(v / PACE_BIN_MINUTES) * PACE_BIN_MINUTES;
+  const lo = Math.max(bins[0], floorTo(quantile(ordered, 0.01)));
+  const hi = Math.min(bins[bins.length - 1], floorTo(quantile(ordered, 0.99)))
+    + PACE_BIN_MINUTES;
   const ticks = [];
   for (let t = Math.ceil(lo * 2) / 2; t <= hi; t += 0.5) ticks.push(t);
 
@@ -1021,7 +1234,7 @@ function renderPaceHistogram(activities) {
 
   const layout = {
     ...PLOTLY_LAYOUT_BASE,
-    title: 'Pace Distribution',
+    title: heading,
     bargap: 0.04,
     xaxis: {
       title: gradeAdjustOn() ? 'Pace (hill-adjusted)' : 'Pace (min/mile)',

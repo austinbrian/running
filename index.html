@@ -105,12 +105,17 @@
           <label class="toggle" title="Shade the derived training zones behind the runs">
             <input type="checkbox" id="pace-show-bands" checked> Zone bands
           </label>
+          <label class="toggle" id="pace-efforts-toggle"
+                 title="Plot the fastest segment at each standard distance inside every run, instead of one average per run">
+            <input type="checkbox" id="pace-best-efforts"> Best efforts
+          </label>
           <label class="toggle" id="pace-grade-toggle"
                  title="Correct each run's pace to your typical terrain, not to flat, using a slope fitted from your own history">
             <input type="checkbox" id="pace-grade-adjust"> Adjust for hills
           </label>
         </div>
         <div id="zone-summary" class="zone-summary"></div>
+        <div id="effort-note" class="effort-note"></div>
         <div id="pace-chart" class="chart-container"></div>
         <div id="pace-histogram" class="chart-container"></div>
         <div id="efficiency-chart" class="chart-container"></div>
@@ -154,6 +159,9 @@
     // Derived zones, written by publish_zones.py in the same workflow. Optional:
     // the page renders without it, minus the bands and the resolved paces.
     const ZONES_URL = 'https://pub-0894dbef034948d8881890a14025ac52.r2.dev/zones.json';
+    // Strava's per-run best efforts. ~600KB, and only the Best efforts toggle
+    // needs it, so it is fetched on first use rather than on every page load.
+    const EFFORTS_URL = 'https://pub-0894dbef034948d8881890a14025ac52.r2.dev/efforts.json';
   </script>
   <script src="assets/running-dashboard.js"></script>
 

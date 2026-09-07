@@ -799,6 +799,7 @@ function renderPaceAnalysis() {
 
   renderZoneSummary();
   renderPaceScatter(filtered, xAxis);
+  renderPaceHistogram(filtered);
   renderEfficiency(filtered);
   renderPaceDistribution(filtered, xAxis);
 }
@@ -960,6 +961,82 @@ function renderPaceScatter(activities, xAxisType) {
   Plotly.newPlot('pace-chart', data, layoutFor(layout), PLOTLY_CONFIG).then(chart => {
     openActivityOnClick(chart, point => point.customdata);
   });
+}
+
+// Fifteen seconds. Wide enough that a bin is not one run, narrow enough that
+// the easy band (about 23 seconds wide) is more than a single bar.
+const PACE_BIN_MINUTES = 0.25;
+
+// Vertical counterpart to zoneBands(): the same zones, shaded across x instead
+// of y, so the two charts read as one set of bands seen from two directions.
+//
+// No labels on this one. The scatter can put them down its right-hand margin;
+// here they would sit on top of the bars, and the widest band is 24 seconds of
+// x — narrower than the word "Threshold". The pace table above the charts
+// already carries the same swatch against the same name, so it is the legend
+// for both.
+function zoneBandsVertical(loMin, hiMin) {
+  if (!bandsOn()) return [];
+  return BAND_ZONES.flatMap(band => {
+    const z = zone(band.key);
+    if (!z) return [];
+    const x0 = Math.max(z.low_s / 60, loMin), x1 = Math.min(z.high_s / 60, hiMin);
+    if (x1 <= x0) return [];  // zone lies entirely outside the plotted range
+    return [{
+      type: 'rect', yref: 'paper', y0: 0, y1: 1, x0, x1,
+      fillcolor: band.color, line: { width: 0 }, layer: 'below',
+    }];
+  });
+}
+
+function renderPaceHistogram(activities) {
+  const el = document.getElementById('pace-histogram');
+  if (!el) return;
+
+  const paces = activities.map(a => paceMin(a)).filter(p => p > 0 && isFinite(p));
+  if (paces.length < 5) { Plotly.purge(el); el.innerHTML = ''; return; }
+
+  const counts = new Map();
+  paces.forEach(p => {
+    const bin = Math.floor(p / PACE_BIN_MINUTES) * PACE_BIN_MINUTES;
+    counts.set(bin, (counts.get(bin) || 0) + 1);
+  });
+  const bins = [...counts.keys()].sort((a, b) => a - b);
+  const centres = bins.map(b => b + PACE_BIN_MINUTES / 2);
+
+  // Whole and half minutes only; every bin edge would be unreadable.
+  const lo = bins[0], hi = bins[bins.length - 1] + PACE_BIN_MINUTES;
+  const ticks = [];
+  for (let t = Math.ceil(lo * 2) / 2; t <= hi; t += 0.5) ticks.push(t);
+
+  const data = [{
+    type: 'bar', x: centres, y: bins.map(b => counts.get(b)),
+    width: PACE_BIN_MINUTES * 0.92,
+    marker: { color: BURNT_ORANGE, opacity: 0.75 },
+    text: bins.map(b => `<b>${formatPace(b)}–${formatPace(b + PACE_BIN_MINUTES)}/mi</b><br>`
+      + `${counts.get(b)} run${counts.get(b) === 1 ? '' : 's'}`),
+    hovertemplate: '%{text}<extra></extra>',
+    textposition: 'none',
+  }];
+
+  const layout = {
+    ...PLOTLY_LAYOUT_BASE,
+    title: 'Pace Distribution',
+    bargap: 0.04,
+    xaxis: {
+      title: gradeAdjustOn() ? 'Pace (hill-adjusted)' : 'Pace (min/mile)',
+      gridcolor: 'lightgray',
+      tickvals: ticks, ticktext: ticks.map(t => formatPace(t)),
+      range: [lo, hi],
+    },
+    yaxis: {
+      title: 'Number of Runs', gridcolor: 'lightgray',
+      // Headroom, so the tallest bar does not run into the top of its band.
+      range: [0, Math.max(...counts.values()) * 1.12],
+    },
+    shapes: zoneBandsVertical(lo, hi),
+  };
+  Plotly.newPlot(el, data, layoutFor(layout), PLOTLY_CONFIG);
 }
 
 // Trailing median over a window of days rather than a count of runs, because

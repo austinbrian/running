@@ -322,13 +322,6 @@ a:hover { text-decoration: underline; }
   border-radius: 3px;
 }
 
-.zone-foot {
-  color: #777;
-  font-size: 13px;
-  max-width: 80ch;
-  line-height: 1.5;
-}
-
 /* Resolved paces in the training week */
 .td-target { color: #FC4C02; font-weight: bold; }
 

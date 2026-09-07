@@ -810,18 +810,8 @@ function renderZoneSummary() {
       + `${band.label} ${range}</span>` : '';
   }).join('');
 
-  const fit = zonesDoc.grade;
-  const grade = fit
-    ? `<div class="zone-foot">Hill adjustment: ${(fit.slope_s_per_ft_per_mi * 100).toFixed(0)}s/mi `
-      + `per 100 ft of gain per mile, fitted on ${fit.runs} runs — `
-      + `but R&sup2; is only ${fit.r_squared.toFixed(2)}, so terrain explains `
-      + `${Math.round(fit.r_squared * 100)}% of the variation in pace and no more. `
-      + `Runs are corrected to ${fit.reference_ft_per_mi} ft/mi, your typical terrain, `
-      + `not to flat.</div>`
-    : '';
-
   el.innerHTML = `<div class="zone-head">${head}</div>`
-    + (bands ? `<div class="zone-chips">${bands}</div>` : '') + grade;
+    + (bands ? `<div class="zone-chips">${bands}</div>` : '');
 }
 
 function renderPaceScatter(activities, xAxisType) {

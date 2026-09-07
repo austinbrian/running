@@ -16,6 +16,7 @@ divided into its own time reads as the fastest split of the run.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -224,3 +225,119 @@ class TestWindowReset(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Transient failures ─────────────────────────────────────────────────────────
+
+import http.client  # noqa: E402
+import io  # noqa: E402
+import urllib.error  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import sync_efforts  # noqa: E402
+
+
+class FakeResponse(io.BytesIO):
+    """Enough of an HTTP response for fetch_detail to read."""
+
+    def __init__(self, payload: dict, headers: dict | None = None):
+        super().__init__(json.dumps(payload).encode())
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def http_error(code: int, body: str = "", headers: dict | None = None):
+    return urllib.error.HTTPError(
+        "https://example.test", code, "err", headers or {}, io.BytesIO(body.encode()))
+
+
+class TestRetries(unittest.TestCase):
+    """A backfill makes hundreds of requests, so rare failures are not rare.
+
+    The 2026-09-07 run died on a reset connection partway through a window and
+    saved nothing, because the exception escaped the fetch loop and skipped the
+    upload underneath it. Both halves of that are covered here.
+    """
+
+    def setUp(self):
+        patcher = mock.patch.object(sync_efforts.time, "sleep")
+        self.sleep = patcher.start()
+        self.addCleanup(patcher.stop)
+        # Two of these deliberately exhaust the retries, which logs at ERROR.
+        # Left on, that noise is indistinguishable from a real failure.
+        sync_efforts.logger.disabled = True
+        self.addCleanup(lambda: setattr(sync_efforts.logger, "disabled", False))
+
+    def test_a_reset_connection_is_retried_and_succeeds(self):
+        attempts = [ConnectionResetError(104, "Connection reset by peer"),
+                    FakeResponse({"id": 7})]
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=attempts) as urlopen:
+            detail, _ = sync_efforts.fetch_detail("tok", 7)
+        self.assertEqual(detail["id"], 7)
+        self.assertEqual(urlopen.call_count, 2)
+        self.sleep.assert_called_once()
+
+    def test_a_read_timeout_is_retried(self):
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[TimeoutError("timed out"), FakeResponse({"id": 8})]):
+            detail, _ = sync_efforts.fetch_detail("tok", 8)
+        self.assertEqual(detail["id"], 8)
+
+    def test_a_dropped_response_is_retried(self):
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[http.client.RemoteDisconnected("bye"),
+                                            FakeResponse({"id": 9})]):
+            self.assertEqual(sync_efforts.fetch_detail("tok", 9)[0]["id"], 9)
+
+    def test_a_5xx_is_retried(self):
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[http_error(502), FakeResponse({"id": 10})]):
+            self.assertEqual(sync_efforts.fetch_detail("tok", 10)[0]["id"], 10)
+
+    def test_it_gives_up_after_the_attempt_limit(self):
+        resets = [ConnectionResetError(104, "reset")] * sync_efforts.RETRY_ATTEMPTS
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=resets) as urlopen:
+            with self.assertRaises(ConnectionResetError):
+                sync_efforts.fetch_detail("tok", 11)
+        self.assertEqual(urlopen.call_count, sync_efforts.RETRY_ATTEMPTS)
+
+    def test_backoff_grows(self):
+        resets = [ConnectionResetError(104, "reset")] * sync_efforts.RETRY_ATTEMPTS
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen", side_effect=resets):
+            with self.assertRaises(ConnectionResetError):
+                sync_efforts.fetch_detail("tok", 12)
+        waits = [call.args[0] for call in self.sleep.call_args_list]
+        self.assertEqual(waits, sorted(waits))
+        self.assertGreater(waits[-1], waits[0])
+
+    def test_a_404_is_not_retried(self):
+        """A deleted activity will still be deleted on the fourth attempt."""
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[http_error(404)]) as urlopen:
+            detail, _ = sync_efforts.fetch_detail("tok", 13)
+        self.assertIsNone(detail)
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_a_429_is_not_retried_but_raised(self):
+        # The caller has to see it: retrying inside the window would burn the
+        # backoff and then hit the same wall.
+        headers = {"X-RateLimit-Usage": "200,400", "X-RateLimit-Limit": "200,2000"}
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[http_error(429, headers=headers)]) as urlopen:
+            with self.assertRaises(sync_efforts.RateLimited):
+                sync_efforts.fetch_detail("tok", 14)
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_a_401_is_not_retried(self):
+        with mock.patch.object(sync_efforts.urllib.request, "urlopen",
+                               side_effect=[http_error(401)]) as urlopen:
+            with self.assertRaises(urllib.error.HTTPError):
+                sync_efforts.fetch_detail("tok", 15)
+        self.assertEqual(urlopen.call_count, 1)

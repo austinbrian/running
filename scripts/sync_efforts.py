@@ -20,6 +20,7 @@ resumes correctly with no bookkeeping.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import logging
 import os
@@ -81,6 +82,14 @@ DEFAULT_PER_WINDOW = 180
 # Stop this far short of a reported limit. A 429 mid-pass is recoverable — the
 # merge is keyed by id — but it wastes the rest of the window.
 RATE_LIMIT_MARGIN = 10
+
+# A backfill makes hundreds of requests, so a per-request failure rate that
+# rounds to nothing still fails most runs: at 180 requests a window, a 0.2%
+# chance of a reset connection is a 30% chance of losing the window. Retry the
+# transient ones rather than letting one blip end the pass.
+RETRY_ATTEMPTS = 4
+RETRY_BACKOFF_S = 2.0
+RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 
 
 def check_env() -> None:
@@ -194,29 +203,57 @@ def fetch_detail(token: str, activity_id: int):
     A None payload means this id is not worth retrying — deleted, or not visible
     to the token. Anything that would be worth retrying raises instead, so the
     caller can stop the pass rather than mark the id done.
+
+    Transient failures are retried here with backoff: a reset connection, a read
+    timeout, a truncated body, a 5xx. A 429 is not — the caller has to see it to
+    know the window is spent.
     """
     url = f"https://www.strava.com/api/v3/activities/{activity_id}?include_all_efforts=true"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response), parse_rate_limits(response.headers)
-    except urllib.error.HTTPError as error:
-        limits = parse_rate_limits(error.headers)
-        detail = error.read().decode()[:300]
-        if error.code == 403 and "Inactive" in detail:
-            logger.error(
-                "Strava rejected the request because the API application is marked "
-                "Inactive. Reactivate it at https://www.strava.com/settings/api "
-                "and re-run this workflow."
-            )
-            sys.exit(1)
-        if error.code == 404:
-            logger.warning(f"Activity {activity_id} not found; skipping")
-            return None, limits
-        if error.code == 429:
-            raise RateLimited(limits) from error
-        logger.error(f"Strava API error {error.code} on {activity_id}: {detail}")
-        raise
+
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.load(response), parse_rate_limits(response.headers)
+        except urllib.error.HTTPError as error:
+            # Must precede the OSError clause below: HTTPError subclasses it.
+            limits = parse_rate_limits(error.headers)
+            detail = error.read().decode()[:300]
+            if error.code == 403 and "Inactive" in detail:
+                logger.error(
+                    "Strava rejected the request because the API application is marked "
+                    "Inactive. Reactivate it at https://www.strava.com/settings/api "
+                    "and re-run this workflow."
+                )
+                sys.exit(1)
+            if error.code == 404:
+                logger.warning(f"Activity {activity_id} not found; skipping")
+                return None, limits
+            if error.code == 429:
+                raise RateLimited(limits) from error
+            if error.code in RETRYABLE_STATUS and attempt < RETRY_ATTEMPTS:
+                backoff(attempt, activity_id, f"HTTP {error.code}")
+                continue
+            logger.error(f"Strava API error {error.code} on {activity_id}: {detail}")
+            raise
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            # OSError covers URLError and ConnectionResetError; HTTPException
+            # covers a dropped or incomplete response; ValueError covers a body
+            # that arrived truncated and would not parse.
+            if attempt >= RETRY_ATTEMPTS:
+                logger.error(f"{type(error).__name__} on {activity_id} after "
+                             f"{RETRY_ATTEMPTS} attempts: {error}")
+                raise
+            backoff(attempt, activity_id, type(error).__name__)
+
+    raise AssertionError("retry loop exhausted without returning or raising")
+
+
+def backoff(attempt: int, activity_id: int, reason: str) -> None:
+    delay = RETRY_BACKOFF_S * (2 ** (attempt - 1))
+    logger.warning(f"{reason} on {activity_id}, attempt {attempt}/{RETRY_ATTEMPTS}; "
+                   f"retrying in {delay:.0f}s")
+    time.sleep(delay)
 
 
 class RateLimited(Exception):
@@ -375,12 +412,22 @@ def main() -> None:
         logger.info(f"Window {window}/{args.windows}: fetching {len(ids)} activities")
         fetched_here = 0
         stopped = None
+        failure = None
 
         for activity_id in ids:
             try:
                 detail, limits = fetch_detail(token, activity_id)
             except RateLimited as limited:
                 stopped = limit_reached(limited.limits) or "429, no counters reported"
+                break
+            except Exception as error:  # noqa: BLE001 — see below
+                # Deliberately broad, and the reason is the upload underneath.
+                # Anything escaping here used to propagate straight out of main()
+                # and skip it, discarding up to a window's worth of fetches over
+                # one blip — which is exactly what a reset connection did on
+                # 2026-09-07, losing 180 records that had already been paid for.
+                # Keep the work, then fail.
+                failure = error
                 break
 
             if detail is not None:
@@ -399,6 +446,13 @@ def main() -> None:
                                       key=lambda r: r.get("start_date_local", ""), reverse=True))
         logger.info(f"Window {window}: {fetched_here} fetched"
                     + (f", stopped on rate limit {stopped}" if stopped else ""))
+
+        if failure is not None:
+            raise SystemExit(
+                f"{type(failure).__name__}: {failure}\n"
+                f"{fetched_here} records from this window were saved before stopping; "
+                f"{len(activities) - len(by_id)} remain. Re-run to resume."
+            )
 
         remaining = len(activities) - len(by_id)
         if remaining <= 0 or window >= args.windows:

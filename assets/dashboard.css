@@ -297,29 +297,59 @@ a:hover { text-decoration: underline; }
 .zone-age { color: #888; }
 .zone-warn { color: #c0392b; font-weight: bold; }
 
-.zone-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-bottom: 8px;
+.zone-pending { color: #777; }
+.zone-pending code { font-size: 13px; }
+
+/* The reference table. Also the chart's legend: the swatch carries the same
+   colour as the band, so there is no separate key to match up. */
+.zone-table {
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 14px;
 }
 
-.zone-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.zone-table th,
+.zone-table td {
+  padding: 4px 18px 4px 0;
+  text-align: left;
+  vertical-align: baseline;
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+.zone-table th { color: #333; }
+
+.zone-range {
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+  color: #000080;
+}
+
+.zone-src {
+  color: #999;
   font-size: 13px;
-  color: #555;
+  white-space: normal;
 }
 
-/* The swatch carries the same colour as the band it names, so the legend is
-   the band rather than a separate key to be matched up. */
-.zone-chip i {
+.zone-unset { color: #c0392b; font-weight: normal; }
+
+.zone-swatch {
   display: inline-block;
-  width: 22px;
-  height: 12px;
+  width: 20px;
+  height: 11px;
+  margin-right: 9px;
   border: 1px solid rgba(0, 0, 0, .12);
   border-radius: 3px;
+  vertical-align: baseline;
+}
+
+/* Zones with no band still get the indent, so the labels line up */
+.zone-swatch-none { border-color: transparent; }
+
+.zone-predicted {
+  color: #555;
+  font-size: 14px;
+  margin-bottom: 4px;
 }
 
 /* Resolved paces in the training week */
@@ -543,6 +573,11 @@ a:hover { text-decoration: underline; }
   .summary-number { font-size: 20px; }
   .summary-unit { font-size: 14px; }
   .week-row hr { margin: 12px 0; }
+
+  /* The source column is the first thing worth losing: it is provenance, and
+     the range beside the name is what you came for. */
+  .zone-table .zone-src { display: none; }
+  .zone-table th, .zone-table td { padding-right: 12px; }
 
   .training-day { grid-template-columns: 4.5rem 1fr; }
   .training-day .td-actual { grid-column: 2; text-align: left; }

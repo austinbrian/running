@@ -35,6 +35,23 @@ const BAND_ZONES = [
   { key: 'recovery', label: 'Recovery', color: 'rgba(0, 0, 128, 0.045)' },
 ];
 
+// Every zone the engine derives, slowest to fastest — the order you would read
+// them in. `band` points at the BAND_ZONES entry that shades this zone on the
+// chart, so the table doubles as the chart's legend instead of needing a
+// separate key to match up.
+const ZONE_TABLE = [
+  { key: 'recovery', label: 'Recovery' },
+  { key: 'easy', label: 'Easy' },
+  { key: 'long_run', label: 'Long run' },
+  { key: 'half_marathon', label: 'Half marathon' },
+  { key: 'tempo_interval', label: 'Tempo / threshold' },
+  { key: 'cruise_interval', label: 'Cruise interval' },
+  { key: '5k_10k', label: '5K–10K' },
+  { key: 'goal', label: 'Goal' },
+];
+
+const PREDICTION_LABELS = { '5k': '5K', '10k': '10K', half: 'Half' };
+
 // The plan's vocabulary, mapped to the zone that resolves it. Mirrors the table
 // in .devlog/plans/pace-zones.md. This belongs in training-plan.json as a `zone`
 // key per workout — a property of the plan, not of the renderer — and should
@@ -118,6 +135,16 @@ function formatPace(decimalMinutes) {
   const minutes = Math.floor(decimalMinutes);
   const seconds = Math.round((decimalMinutes - minutes) * 60);
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+// 1555 -> "25:55", 7153 -> "1:59:13". Hours only when there are any, and the
+// minutes only zero-padded once an hour is in front of them.
+function formatDuration(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60) % 60;
+  const secs = Math.round(seconds % 60);
+  const mm = hours ? String(minutes).padStart(2, '0') : String(minutes);
+  return `${hours ? hours + ':' : ''}${mm}:${String(secs).padStart(2, '0')}`;
 }
 
 function parseDate(dateStr) {
@@ -794,7 +821,16 @@ function zoneBands() {
 function renderZoneSummary() {
   const el = document.getElementById('zone-summary');
   if (!el) return;
-  if (!zonesDoc) { el.innerHTML = ''; return; }
+
+  // Say so, rather than rendering nothing. An empty panel and a disabled toggle
+  // are indistinguishable from the feature being broken, which is exactly how
+  // this read while zones.json was still a 404.
+  if (!zonesDoc) {
+    el.innerHTML = '<div class="zone-head zone-pending">Pace zones have not been '
+      + 'published yet &mdash; <code>zones.json</code> is written by the sync workflow. '
+      + 'Bands and hill adjustment turn on once it lands.</div>';
+    return;
+  }
 
   const a = zonesDoc.anchor;
   const head = a
@@ -804,14 +840,32 @@ function renderZoneSummary() {
     : `<span class="zone-warn">No anchor.</span> `
       + esc((zonesDoc.zones.tempo_interval || {}).source || '');
 
-  const bands = BAND_ZONES.map(band => {
-    const range = zoneRange(band.key);
-    return range ? `<span class="zone-chip"><i style="background:${band.color}"></i>`
-      + `${band.label} ${range}</span>` : '';
+  const bandFor = key => BAND_ZONES.find(b => b.key === key);
+  const rows = ZONE_TABLE.map(entry => {
+    const z = (zonesDoc.zones || {})[entry.key];
+    if (!z) return '';
+    const band = bandFor(entry.key);
+    const swatch = band
+      ? `<i class="zone-swatch" style="background:${band.color}"></i>`
+      : '<i class="zone-swatch zone-swatch-none"></i>';
+    const range = z.confident && z.low_s
+      ? `${formatPace(z.low_s / 60)}–${formatPace(z.high_s / 60)}`
+      : '<span class="zone-unset">not set</span>';
+    return `<tr>
+        <th scope="row">${swatch}${entry.label}</th>
+        <td class="zone-range">${range}</td>
+        <td class="zone-src">${esc(z.source || '')}</td>
+      </tr>`;
   }).join('');
 
+  const predicted = Object.entries(zonesDoc.predicted_s || {})
+    .map(([key, seconds]) =>
+      `${PREDICTION_LABELS[key] || key} <b>${formatDuration(seconds)}</b>`)
+    .join(' &middot; ');
+
   el.innerHTML = `<div class="zone-head">${head}</div>`
-    + (bands ? `<div class="zone-chips">${bands}</div>` : '');
+    + `<table class="zone-table"><tbody>${rows}</tbody></table>`
+    + (predicted ? `<div class="zone-predicted">Predicted: ${predicted}</div>` : '');
 }
 
 function renderPaceScatter(activities, xAxisType) {

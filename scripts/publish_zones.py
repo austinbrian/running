@@ -113,6 +113,10 @@ def build(activities: list[dict], efforts: list[dict], today: str) -> dict:
         },
         "zones": zones,
         "predicted_s": predictions_from(anchor),
+        # None when there is not enough history to fit. The page has to be able
+        # to render without it, and to say so rather than adjusting by nothing
+        # and calling the result adjusted.
+        "grade": zone_engine.fit_grade_adjustment(activities, today),
     }
 
 

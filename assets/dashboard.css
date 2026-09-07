@@ -276,6 +276,70 @@ a:hover { text-decoration: underline; }
 
 #target-slider { width: 150px; }
 
+/* ── Zone bands and toggles ─────────────────────────────────────────────── */
+
+.controls .toggle {
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.controls .toggle input:disabled { cursor: not-allowed; }
+.controls .toggle:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+
+.zone-summary {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: #444;
+}
+
+.zone-head { margin-bottom: 8px; }
+.zone-age { color: #888; }
+.zone-warn { color: #c0392b; font-weight: bold; }
+
+.zone-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+}
+
+.zone-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #555;
+}
+
+/* The swatch carries the same colour as the band it names, so the legend is
+   the band rather than a separate key to be matched up. */
+.zone-chip i {
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 3px;
+}
+
+.zone-foot {
+  color: #777;
+  font-size: 13px;
+  max-width: 80ch;
+  line-height: 1.5;
+}
+
+/* Resolved paces in the training week */
+.td-target { color: #FC4C02; font-weight: bold; }
+
+.td-pace {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.td-pace .td-src { color: #888; }
+.td-pace-unset { color: #c0392b; }
+
 /* ── Footer ─────────────────────────────────────────────────────────────── */
 
 .site-footer {
@@ -450,6 +514,9 @@ a:hover { text-decoration: underline; }
      so two controls per row leaves neither of them legible. */
   .controls { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
   .controls > label { justify-content: space-between; gap: 10px; }
+  /* space-between is right for a label and its input, and wrong for a checkbox:
+     it strands the box at the far edge from the word it belongs to. */
+  .controls > label.toggle { justify-content: flex-start; }
   .controls input[type="date"], .controls select { flex: 1; min-width: 0; }
   .radio-group { flex-wrap: wrap; }
   #target-slider { flex: 1; width: auto; min-width: 0; }

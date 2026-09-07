@@ -23,6 +23,32 @@ const PLOTLY_LAYOUT_BASE = {
 };
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+// Which zones get a shaded band, slowest last so they stack predictably. Not
+// every zone: long_run sits inside easy and half_marathon inside threshold, and
+// drawing all eight turns the plot into mud. These four are the ones a run can
+// meaningfully be judged against.
+const BAND_ZONES = [
+  { key: '5k_10k', label: '5K–10K', color: 'rgba(252, 76, 2, 0.14)' },
+  { key: 'tempo_interval', label: 'Threshold', color: 'rgba(230, 126, 34, 0.14)' },
+  { key: 'easy', label: 'Easy', color: 'rgba(0, 0, 128, 0.08)' },
+  { key: 'recovery', label: 'Recovery', color: 'rgba(0, 0, 128, 0.045)' },
+];
+
+// The plan's vocabulary, mapped to the zone that resolves it. Mirrors the table
+// in .devlog/plans/pace-zones.md. This belongs in training-plan.json as a `zone`
+// key per workout — a property of the plan, not of the renderer — and should
+// move to build_site_plan.py when that script next changes.
+const ZONE_FOR_TYPE = {
+  'Easy Run': 'easy',
+  'Long Run': 'long_run',
+  'Fast Finish Long Run': 'half_marathon',
+  'Progression Run': 'tempo_interval',
+  'Tempo Intervals': 'tempo_interval',
+  'Cruise Intervals': 'cruise_interval',
+  'Fartlek Run': '5k_10k',
+  'Race Day': 'goal',
+};
 const DAY_NAMES_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // ── Viewport ───────────────────────────────────────────────────────────────────
@@ -75,6 +101,10 @@ function openActivityOnClick(chart, activityIdOf) {
 // ── State ──────────────────────────────────────────────────────────────────────
 
 let allActivities = [];
+// zones.json, or null when it has not been published yet. Everything that reads
+// it degrades to the unzoned view rather than failing, because the page has to
+// keep working through the window where the extraction is still running.
+let zonesDoc = null;
 let trainingPlan = null;
 // Which plan week the Training Plan tab is showing. Null until first render,
 // then defaults to the current week; clicking the week nav overrides it.
@@ -107,6 +137,48 @@ function activityDate(a) {
 
 function activityDay(a) {
   return (a.start_date_local || a.start_date || '').slice(0, 10);
+}
+
+function rawPaceMin(a) {
+  const miles = a.distance_miles || a.distance * 0.000621371;
+  const mins = a.moving_time_minutes || a.moving_time / 60;
+  return miles > 0 ? mins / miles : 0;
+}
+
+// Pace corrected to typical terrain, using the slope publish_zones.py fitted
+// from this runner's own history. The reference is median terrain rather than
+// flat ground on purpose: adjusting to flat would make every run faster and
+// shift the whole distribution, which would quietly invalidate the zone bands —
+// those come off the pace percentiles of real runs on real hills.
+function gradeAdjustedPaceMin(a) {
+  const raw = rawPaceMin(a);
+  const fit = zonesDoc && zonesDoc.grade;
+  const miles = a.distance_miles || a.distance * 0.000621371;
+  const gain = a.elevation_feet;
+  if (!fit || !miles || gain === undefined || gain === null) return raw;
+  const delta = (gain / miles) - fit.reference_ft_per_mi;
+  return raw - (fit.slope_s_per_ft_per_mi * delta) / 60;
+}
+
+function gradeAdjustOn() {
+  return Boolean(document.getElementById('pace-grade-adjust')?.checked)
+    && Boolean(zonesDoc && zonesDoc.grade);
+}
+
+function paceMin(a) {
+  return gradeAdjustOn() ? gradeAdjustedPaceMin(a) : rawPaceMin(a);
+}
+
+function zone(key) {
+  const z = zonesDoc && zonesDoc.zones && zonesDoc.zones[key];
+  return z && z.confident && z.low_s ? z : null;
+}
+
+// "8:42–9:06/mi", or null. Callers show the zone's own `source` when this is
+// null, rather than substituting a guess.
+function zoneRange(key) {
+  const z = zone(key);
+  return z ? `${formatPace(z.low_s / 60)}–${formatPace(z.high_s / 60)}/mi` : null;
 }
 
 function toISODate(date) {
@@ -159,6 +231,16 @@ async function loadActivities() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     allActivities = await response.json();
     console.log(`Loaded ${allActivities.length} activities`);
+
+    // Optional and fetched in parallel with nothing blocking on it: zones.json
+    // does not exist until publish_zones.py has run, and the rest of the page
+    // does not depend on it.
+    try {
+      const zonesResponse = await fetch(ZONES_URL);
+      if (zonesResponse.ok) zonesDoc = await zonesResponse.json();
+    } catch (zonesError) {
+      console.warn('zones.json unavailable; bands and resolved paces are off', zonesError);
+    }
     if (!allActivities.length) {
       document.getElementById('dashboard-content').innerHTML =
         '<p class="empty">No runs synced yet. The daily job writes ' +
@@ -196,6 +278,14 @@ function initializeDashboard() {
   if (targetSlider) {
     targetSlider.value = 1000;
     document.getElementById('target-value').textContent = '1,000';
+  }
+
+  const gradeToggle = document.getElementById('pace-grade-adjust');
+  if (gradeToggle && !(zonesDoc && zonesDoc.grade)) {
+    gradeToggle.disabled = true;
+    document.getElementById('pace-grade-toggle')?.setAttribute(
+      'title', 'No hill adjustment published yet — publish_zones.py fits one from ' +
+               'the last two years of runs.');
   }
 
   // Render initial tab
@@ -248,6 +338,8 @@ function bindEvents() {
   });
   document.querySelectorAll('input[name="pace-x-axis"]')
     .forEach(input => input.addEventListener('change', renderPaceAnalysis));
+  document.getElementById('pace-show-bands')?.addEventListener('change', renderPaceAnalysis);
+  document.getElementById('pace-grade-adjust')?.addEventListener('change', renderPaceAnalysis);
 
   // Delegated: the week nav and day rows are re-rendered on every week change,
   // so binding per-element would leak listeners.
@@ -662,8 +754,74 @@ function renderPaceAnalysis() {
   const filtered = filterByDateRange(allActivities, startDate, endDate)
     .filter(a => (a.distance_miles || a.distance * 0.000621371) >= 1.0);
 
+  renderZoneSummary();
   renderPaceScatter(filtered, xAxis);
   renderPaceDistribution(filtered, xAxis);
+}
+
+function bandsOn() {
+  return Boolean(document.getElementById('pace-show-bands')?.checked) && Boolean(zonesDoc);
+}
+
+// Horizontal shaded bands, drawn below the trace. Returns empty arrays when the
+// toggle is off or nothing has been published, so the caller can spread these
+// unconditionally.
+function zoneBands() {
+  if (!bandsOn()) return { shapes: [], annotations: [] };
+  const shapes = [], annotations = [];
+  BAND_ZONES.forEach(band => {
+    const z = zone(band.key);
+    if (!z) return;
+    shapes.push({
+      type: 'rect', xref: 'paper', x0: 0, x1: 1,
+      y0: z.low_s / 60, y1: z.high_s / 60,
+      fillcolor: band.color, line: { width: 0 }, layer: 'below',
+    });
+    annotations.push({
+      xref: 'paper', x: 0.995, xanchor: 'right',
+      y: (z.low_s + z.high_s) / 120, yanchor: 'middle',
+      text: band.label, showarrow: false,
+      font: { size: isNarrow() ? 9 : 11, color: '#777' },
+    });
+  });
+  return { shapes, annotations };
+}
+
+// The bands are only as good as the anchor behind them, so the anchor is stated
+// next to them rather than left implicit. When there is no anchor this reports
+// zones.py's own refusal verbatim: a visibly missing tempo pace is a prompt to
+// run a time trial, a quietly guessed one is how you get hurt.
+function renderZoneSummary() {
+  const el = document.getElementById('zone-summary');
+  if (!el) return;
+  if (!zonesDoc) { el.innerHTML = ''; return; }
+
+  const a = zonesDoc.anchor;
+  const head = a
+    ? `Zones anchored on a <b>${esc(a.effort)}</b> best effort of `
+      + `<b>${formatPace(a.pace_s / 60)}/mi</b> on ${a.date} `
+      + `<span class="zone-age">(${a.age_weeks} weeks old)</span>`
+    : `<span class="zone-warn">No anchor.</span> `
+      + esc((zonesDoc.zones.tempo_interval || {}).source || '');
+
+  const bands = BAND_ZONES.map(band => {
+    const range = zoneRange(band.key);
+    return range ? `<span class="zone-chip"><i style="background:${band.color}"></i>`
+      + `${band.label} ${range}</span>` : '';
+  }).join('');
+
+  const fit = zonesDoc.grade;
+  const grade = fit
+    ? `<div class="zone-foot">Hill adjustment: ${(fit.slope_s_per_ft_per_mi * 100).toFixed(0)}s/mi `
+      + `per 100 ft of gain per mile, fitted on ${fit.runs} runs — `
+      + `but R&sup2; is only ${fit.r_squared.toFixed(2)}, so terrain explains `
+      + `${Math.round(fit.r_squared * 100)}% of the variation in pace and no more. `
+      + `Runs are corrected to ${fit.reference_ft_per_mi} ft/mi, your typical terrain, `
+      + `not to flat.</div>`
+    : '';
+
+  el.innerHTML = `<div class="zone-head">${head}</div>`
+    + (bands ? `<div class="zone-chips">${bands}</div>` : '') + grade;
 }
 
 function renderPaceScatter(activities, xAxisType) {
@@ -678,10 +836,11 @@ function renderPaceScatter(activities, xAxisType) {
   const hoverTexts = [];
   const ids = [];
 
+  const adjusted = gradeAdjustOn();
   activities.forEach(a => {
     const miles = a.distance_miles || a.distance * 0.000621371;
-    const mins = a.moving_time_minutes || a.moving_time / 60;
-    const pace = miles > 0 ? mins / miles : 0;
+    const raw = rawPaceMin(a);
+    const pace = adjusted ? gradeAdjustedPaceMin(a) : raw;
     const elev = a.elevation_feet || a.total_elevation_gain * 3.28084;
 
     xValues.push(xAxisType === 'distance' ? miles : (a.start_date_local || a.start_date));
@@ -691,9 +850,12 @@ function renderPaceScatter(activities, xAxisType) {
     hoverTexts.push(
       `<b>${a.name}</b><br>` +
       `Distance: ${miles.toFixed(2)} miles<br>` +
-      `Pace: ${formatPace(pace)} min/mile<br>` +
+      // Both paces when adjusting, so the correction is never invisible.
+      (adjusted
+        ? `Pace: ${formatPace(pace)} adjusted (${formatPace(raw)} actual)<br>`
+        : `Pace: ${formatPace(pace)} min/mile<br>`) +
       `Date: ${activityDay(a)}<br>` +
-      `Elevation: ${elev.toFixed(0)} ft`
+      `Elevation: ${elev.toFixed(0)} ft (${(elev / miles).toFixed(0)} ft/mi)`
     );
   });
 
@@ -715,6 +877,7 @@ function renderPaceScatter(activities, xAxisType) {
     customdata: ids,
   }];
 
+  const bands = zoneBands();
   const layout = {
     ...PLOTLY_LAYOUT_BASE,
     title: 'Pace Analysis',
@@ -723,10 +886,14 @@ function renderPaceScatter(activities, xAxisType) {
       gridcolor: 'lightgray',
     },
     yaxis: {
-      title: 'Pace (minutes/mile)',
+      title: adjusted
+        ? `Pace (min/mile, hill-adjusted to ${zonesDoc.grade.reference_ft_per_mi} ft/mi)`
+        : 'Pace (minutes/mile)',
       autorange: 'reversed',
       gridcolor: 'lightgray',
     },
+    shapes: bands.shapes,
+    annotations: bands.annotations,
   };
 
   Plotly.newPlot('pace-chart', data, layoutFor(layout), PLOTLY_CONFIG).then(chart => {
@@ -1011,9 +1178,24 @@ function renderWeekTable(plan, byDate, today, currentWeek, shownWeek) {
     } else {
       label = 'upcoming';
     }
+    // The plan names a zone; zones.json is what turns it into a pace. When the
+    // zone is unset, say why rather than leaving the session unresolvable — the
+    // refusal is the useful output.
+    const zoneKey = ZONE_FOR_TYPE[w.type];
+    const range = zoneKey ? zoneRange(zoneKey) : null;
+    const zoneNote = !zoneKey || isRest ? ''
+      : range
+        ? `<p class="td-pace">Target <b>${range}</b>`
+          + `<span class="td-src"> — ${esc(zonesDoc.zones[zoneKey].source)}</span></p>`
+        : zonesDoc
+          ? `<p class="td-pace td-pace-unset">No pace for this session yet — `
+            + `${esc((zonesDoc.zones[zoneKey] || {}).source || 'zone not derived')}</p>`
+          : '';
+
     // Rest days with nothing but boilerplate are not worth a disclosure triangle
     const detail = [
       w.prescription ? `<p class="td-session">${esc(w.prescription)}</p>` : '',
+      zoneNote,
       w.goal ? `<p class="td-goal">${esc(w.goal)}</p>` : '',
     ].join('');
     const expandable = Boolean(detail);
@@ -1023,6 +1205,7 @@ function renderWeekTable(plan, byDate, today, currentWeek, shownWeek) {
         ${expandable ? `tabindex="0" role="button" aria-expanded="false"` : ''}>
         <div class="td-day">${w.day_name.slice(0, 3)} <span>${w.date.slice(8)}</span></div>
         <div class="td-plan"><strong>${w.type}</strong>${w.duration ? ' &middot; ' + w.duration : ''}${
+          range && !isRest ? ` <span class="td-target">@ ${range}</span>` : ''}${
           w.prescription ? '<span class="td-flag" title="Structured session">&#9679;</span>' : ''}</div>
         <div class="td-actual">${label}</div>
         ${expandable ? `<div class="td-detail">${detail}</div>` : ''}
@@ -1059,13 +1242,13 @@ function renderLongRunChart(plan, byDate, today) {
     actual.push(best || null);
   }
 
-  // Race-day effort at recent average pace, for scale.
-  let mi = 0, mins = 0;
-  allActivities.forEach(a => {
-    const d = activityDay(a);
-    if (d >= '2026-06-01' && d <= today) { mi += a.distance_miles || 0; mins += a.moving_time_minutes || 0; }
-  });
-  const racePaceMin = mi > 0 ? (mins / mi) * plan.race_distance_miles : null;
+  // Race-day effort, for scale. This used to be total minutes over total miles
+  // since 2026-06-01, times 13.1 — every easy shakeout weighted equally with
+  // every long run and no distance decay at all, which read as a prediction and
+  // was not one. It now comes from zones.json, Riegel-extrapolated from the
+  // anchoring effort, and is simply absent when there is no anchor.
+  const predictedHalfS = zonesDoc && zonesDoc.predicted_s && zonesDoc.predicted_s.half;
+  const racePaceMin = predictedHalfS ? predictedHalfS / 60 : null;
 
   const traces = [
     { x: weeks, y: span, base: base, type: 'bar', name: 'plan target range',
@@ -1099,7 +1282,7 @@ function renderLongRunChart(plan, byDate, today) {
       xanchor: isNarrow() ? 'left' : 'right',
       text: isNarrow()
         ? `13.1 mi ≈ ${Math.round(racePaceMin)} min`
-        : `13.1 mi at your recent pace ≈ ${Math.round(racePaceMin)} min`,
+        : `predicted half marathon ≈ ${Math.round(racePaceMin)} min`,
       font: { size: isNarrow() ? 10 : 11, color: '#777' },
     }];
   }

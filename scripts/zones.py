@@ -77,6 +77,25 @@ TRUST_WORKOUT = 1
 TRUST_SEGMENT = 2
 TRUST_WHOLE_RUN = 3
 
+# ── Grade adjustment ───────────────────────────────────────────────────────────
+#
+# Elevation gain per mile is the strongest single correlate of pace in this
+# dataset (r = +0.30), which is not saying much — it explains about 9% of the
+# variance, and the whole effect across the p10-p90 terrain range is roughly
+# 19 s/mi. Worth correcting for, not worth trusting far.
+#
+# The slope is fitted from the runner's own history rather than taken from a
+# published cost-of-transport curve. Those are calibrated on treadmill grade,
+# and the only signal available here is *total gain*, which says how hilly a
+# run was but not how the climb was distributed. A fitted slope also absorbs
+# what correlates with hills — trail surfaces, longer efforts, harder days —
+# so it is a terrain correction rather than a physiological one. Named
+# accordingly everywhere it surfaces.
+GRADE_FIT_DAYS = 730
+GRADE_FIT_MIN_RUNS = 30
+# A run has to be long enough that its gain per mile means something.
+GRADE_FIT_MIN_MILES = 2.0
+
 ZoneName = Literal["recovery", "easy", "long_run", "half_marathon", "goal",
                    "tempo_interval", "cruise_interval", "5k_10k"]
 
@@ -316,6 +335,63 @@ def derive(activities: list[dict], today: str,
         zones["goal"] = unset("goal", "no goal time set")
 
     return zones
+
+
+def fit_grade_adjustment(activities: list[dict], today: str) -> dict[str, Any] | None:
+    """Least squares of pace against elevation gain per mile.
+
+    Returns the slope in seconds per mile per foot-of-gain per mile, along with
+    the reference terrain and the R^2, so a consumer can see how little of the
+    variance this explains before leaning on it.
+
+    The reference is the **median terrain**, not flat ground. Adjusting to flat
+    would make every run faster and shift the whole distribution, which would
+    silently invalidate the zone bands — those are derived from the pace
+    percentiles of actual runs on actual hills. Normalising to typical terrain
+    leaves the centre where it is and only moves runs relative to each other,
+    which is the comparison the adjustment is for.
+    """
+    runs = []
+    for activity in recent(activities, today, days=GRADE_FIT_DAYS):
+        miles = activity.get("distance_miles") or 0
+        gain = activity.get("elevation_feet")
+        pace = pace_s(activity)
+        if gain is None or pace is None or miles < GRADE_FIT_MIN_MILES:
+            continue
+        runs.append((gain / miles, pace))
+
+    if len(runs) < GRADE_FIT_MIN_RUNS:
+        return None
+
+    mean_x = statistics.mean(x for x, _ in runs)
+    mean_y = statistics.mean(y for _, y in runs)
+    sxx = sum((x - mean_x) ** 2 for x, _ in runs)
+    if sxx == 0:
+        return None  # every run on identical terrain; nothing to fit
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in runs) / sxx
+
+    var_y = statistics.pvariance([y for _, y in runs])
+    residuals = [y - (mean_y + slope * (x - mean_x)) for x, y in runs]
+    r_squared = 1 - statistics.pvariance(residuals) / var_y if var_y else 0.0
+
+    return {
+        "slope_s_per_ft_per_mi": round(slope, 4),
+        "reference_ft_per_mi": round(mean_x, 1),
+        "runs": len(runs),
+        "r_squared": round(r_squared, 3),
+    }
+
+
+def grade_adjusted_pace_s(activity: dict[str, Any], fit: dict[str, Any] | None) -> float | None:
+    """Pace corrected to the reference terrain. Kept here so the site and the
+    watch cannot disagree about it any more than they can about the zones."""
+    pace = pace_s(activity)
+    miles = activity.get("distance_miles") or 0
+    gain = activity.get("elevation_feet")
+    if pace is None or not fit or gain is None or miles <= 0:
+        return pace
+    delta = (gain / miles) - fit["reference_ft_per_mi"]
+    return pace - fit["slope_s_per_ft_per_mi"] * delta
 
 
 # ── At-a-glance target feedback ────────────────────────────────────────────────

@@ -124,7 +124,8 @@ if __name__ == "__main__":
 # ── Best efforts as anchors ────────────────────────────────────────────────────
 
 from zones import (  # noqa: E402
-    ANCHOR_MIN_WEIGHT, age_weeks, anchor_from_efforts, recency_weight,
+    ANCHOR_MIN_WEIGHT, age_weeks, anchor_from_efforts, fit_grade_adjustment,
+    grade_adjusted_pace_s, pace_s, recency_weight,
 )
 
 
@@ -287,3 +288,73 @@ class TestThresholdMargin(unittest.TestCase):
     def test_the_accepted_band_does_not_overlap_easy(self):
         z = derive(easy_log(pace=9.5), TODAY, efforts=[effort("2026-08-20", {"5k": 1550})])
         self.assertLess(z["tempo_interval"]["high_s"], z["easy"]["low_s"])
+
+
+class TestGradeAdjustment(unittest.TestCase):
+    """A terrain correction, fitted from history rather than imported.
+
+    The reference is median terrain, not flat. Adjusting to flat would move the
+    whole pace distribution and silently invalidate the zone bands, which come
+    off the percentiles of runs on real hills.
+    """
+
+    @staticmethod
+    def hilly_log():
+        # Pace rises 0.2 s/mi for every extra foot of gain per mile, exactly.
+        out = []
+        for i in range(60):
+            ft_per_mi = (i % 10) * 20            # 0 .. 180
+            pace_s_per_mi = 540 + 0.2 * ft_per_mi
+            miles = 5.0
+            out.append({
+                "start_date": f"2026-0{6 + i % 3}-{1 + i % 28:02d}T12:00:00Z",
+                "distance_miles": miles,
+                "moving_time_minutes": pace_s_per_mi * miles / 60,
+                "elevation_feet": ft_per_mi * miles,
+            })
+        return out
+
+    def test_it_recovers_the_slope_it_was_given(self):
+        fit = fit_grade_adjustment(self.hilly_log(), TODAY)
+        self.assertAlmostEqual(fit["slope_s_per_ft_per_mi"], 0.2, places=2)
+        self.assertGreater(fit["r_squared"], 0.99)
+
+    def test_the_reference_is_the_mean_terrain_not_flat(self):
+        fit = fit_grade_adjustment(self.hilly_log(), TODAY)
+        self.assertAlmostEqual(fit["reference_ft_per_mi"], 90.0, places=0)
+
+    def test_adjustment_flattens_the_terrain_effect(self):
+        log = self.hilly_log()
+        fit = fit_grade_adjustment(log, TODAY)
+        adjusted = [grade_adjusted_pace_s(a, fit) for a in log]
+        # Every run was the same effort on different hills, so once corrected
+        # they should all land on the same pace.
+        self.assertLess(max(adjusted) - min(adjusted), 1.0)
+
+    def test_a_flat_run_gets_slower_and_a_hilly_one_faster(self):
+        log = self.hilly_log()
+        fit = fit_grade_adjustment(log, TODAY)
+        flat = {"distance_miles": 5.0, "moving_time_minutes": 45, "elevation_feet": 0}
+        hilly = {"distance_miles": 5.0, "moving_time_minutes": 45, "elevation_feet": 900}
+        self.assertGreater(grade_adjusted_pace_s(flat, fit), pace_s(flat))
+        self.assertLess(grade_adjusted_pace_s(hilly, fit), pace_s(hilly))
+
+    def test_too_little_history_returns_none_rather_than_a_bad_fit(self):
+        self.assertIsNone(fit_grade_adjustment(self.hilly_log()[:5], TODAY))
+
+    def test_identical_terrain_everywhere_is_not_fittable(self):
+        log = [{"start_date": f"2026-08-{1 + i % 28:02d}T12:00:00Z",
+                "distance_miles": 5.0, "moving_time_minutes": 47.5,
+                "elevation_feet": 250} for i in range(40)]
+        self.assertIsNone(fit_grade_adjustment(log, TODAY))
+
+    def test_runs_without_elevation_are_left_alone_not_zeroed(self):
+        # A missing gain is not a flat run; treating it as 0 would make every
+        # unmeasured run look like it was adjusted for being flat.
+        fit = fit_grade_adjustment(self.hilly_log(), TODAY)
+        no_elev = {"distance_miles": 5.0, "moving_time_minutes": 45}
+        self.assertEqual(grade_adjusted_pace_s(no_elev, fit), pace_s(no_elev))
+
+    def test_no_fit_means_pace_passes_through_unchanged(self):
+        run_ = {"distance_miles": 5.0, "moving_time_minutes": 45, "elevation_feet": 500}
+        self.assertEqual(grade_adjusted_pace_s(run_, None), pace_s(run_))

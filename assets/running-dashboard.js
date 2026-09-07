@@ -13,7 +13,9 @@ const STRAVA_ORANGE = '#FC4C02';
 const BURNT_ORANGE = '#E67E22';
 const DARK_BLUE = '#000080';
 
-const PLOTLY_CONFIG = { displayModeBar: false };
+// responsive keeps a chart matched to its container as the window changes;
+// without it a phone rotated to landscape keeps the portrait width forever.
+const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
 const PLOTLY_LAYOUT_BASE = {
   plot_bgcolor: 'white',
   hovermode: 'closest',
@@ -21,6 +23,54 @@ const PLOTLY_LAYOUT_BASE = {
 };
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const DAY_NAMES_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// ── Viewport ───────────────────────────────────────────────────────────────────
+//
+// Plotly's responsive mode resizes a chart but does not restyle it: the margins,
+// fonts and legend placement are whatever the layout said when it was drawn. So
+// anything that has to change with the width is read from here at render time,
+// and the current tab is redrawn when the breakpoint is crossed. Matches the
+// 640px breakpoint in dashboard.css.
+
+const NARROW = window.matchMedia('(max-width: 640px)');
+const isNarrow = () => NARROW.matches;
+
+// Plotly's defaults reserve about 80px on the left and 80px on top for the
+// title, which on a 350px-wide phone is most of the plot. An overlaid legend
+// covers the data outright, so it moves below the x-axis.
+const NARROW_LAYOUT = {
+  height: 300,
+  margin: { l: 50, r: 14, t: 40, b: 54 },
+  font: { size: 11 },
+  legend: { orientation: 'h', y: -0.32, x: 0, font: { size: 11 } },
+};
+
+function layoutFor(layout) {
+  if (!isNarrow()) return layout;
+  const narrow = { ...layout, ...NARROW_LAYOUT };
+  // A layout title is either a bare string or an object; keep the text either
+  // way, since spreading NARROW_LAYOUT over it would otherwise drop it.
+  const title = typeof layout.title === 'string' ? layout.title : layout.title?.text;
+  if (title) narrow.title = { text: title, font: { size: 15 } };
+  return narrow;
+}
+
+// A tap fires hover and click together, so on a touchscreen the first tap on a
+// run would open Strava before its tooltip could be read. Take the second tap
+// on the same point instead; a mouse still opens on the first click.
+const COARSE_POINTER = window.matchMedia('(pointer: coarse)').matches;
+
+function openActivityOnClick(chart, activityIdOf) {
+  let armed = null;
+  chart.on('plotly_click', (eventData) => {
+    const point = eventData.points && eventData.points[0];
+    const id = point && activityIdOf(point);
+    if (!id) return;
+    if (COARSE_POINTER && armed !== id) { armed = id; return; }
+    window.open(`https://www.strava.com/activities/${id}`, '_blank');
+  });
+}
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -361,7 +411,7 @@ function renderCumulativeChart(activities, startDateStr, endDateStr, target) {
     legend: { yanchor: 'top', y: 0.99, xanchor: 'left', x: 0.01 },
   };
 
-  Plotly.newPlot('cumulative-chart', data, layout, PLOTLY_CONFIG);
+  Plotly.newPlot('cumulative-chart', data, layoutFor(layout), PLOTLY_CONFIG);
 }
 
 function renderInfoBoxes(activities, startDateStr, endDateStr, target) {
@@ -568,12 +618,18 @@ function renderSingleWeekChart(containerId, weekStart, weekData, sizeBy) {
 
   const layout = {
     ...PLOTLY_LAYOUT_BASE,
-    title: { text: `Week of ${weekLabel}`, font: { family: 'Arial, sans-serif', size: 18, color: '#333' } },
+    title: {
+      text: `Week of ${weekLabel}`,
+      font: { family: 'Arial, sans-serif', size: isNarrow() ? 14 : 18, color: '#333' },
+    },
     xaxis: {
-      ticktext: DAY_NAMES,
+      // Seven full weekday names need ~500px of plot; below that Plotly thins
+      // them out rather than shortening them, leaving unlabelled bubbles.
+      ticktext: isNarrow() ? DAY_NAMES_SHORT : DAY_NAMES,
       tickvals: [0, 1, 2, 3, 4, 5, 6],
       range: [-0.5, 6.5],
-      showgrid: false, showline: false,
+      showgrid: false, showline: false, zeroline: false,
+      tickfont: isNarrow() ? { size: 10 } : undefined,
     },
     yaxis: {
       showticklabels: false,
@@ -581,21 +637,16 @@ function renderSingleWeekChart(containerId, weekStart, weekData, sizeBy) {
       showgrid: false, zeroline: false, showline: false,
     },
     showlegend: false,
-    height: 150,
-    margin: { l: 20, r: 20, t: 40, b: 20 },
+    // Sized here rather than through layoutFor: this is a strip, not a plot,
+    // and the shared narrow height would make it three times too tall.
+    height: isNarrow() ? 130 : 150,
+    margin: isNarrow() ? { l: 8, r: 8, t: 32, b: 22 } : { l: 20, r: 20, t: 40, b: 20 },
     hovermode: 'x',
     hoverdistance: 300,
   };
 
   Plotly.newPlot(containerId, data, layout, PLOTLY_CONFIG).then(chart => {
-    chart.on('plotly_click', (eventData) => {
-      if (eventData.points && eventData.points[0]) {
-        const ids = eventData.points[0].customdata;
-        if (ids && ids.length > 0) {
-          window.open(`https://www.strava.com/activities/${ids[0]}`, '_blank');
-        }
-      }
-    });
+    openActivityOnClick(chart, point => (point.customdata || [])[0]);
   });
 }
 
@@ -617,7 +668,7 @@ function renderPaceAnalysis() {
 
 function renderPaceScatter(activities, xAxisType) {
   if (activities.length === 0) {
-    Plotly.newPlot('pace-chart', [], { ...PLOTLY_LAYOUT_BASE, title: 'Pace Analysis' }, PLOTLY_CONFIG);
+    Plotly.newPlot('pace-chart', [], layoutFor({ ...PLOTLY_LAYOUT_BASE, title: 'Pace Analysis' }), PLOTLY_CONFIG);
     return;
   }
 
@@ -678,21 +729,14 @@ function renderPaceScatter(activities, xAxisType) {
     },
   };
 
-  Plotly.newPlot('pace-chart', data, layout, PLOTLY_CONFIG).then(chart => {
-    chart.on('plotly_click', (eventData) => {
-      if (eventData.points && eventData.points[0]) {
-        const activityId = eventData.points[0].customdata;
-        if (activityId) {
-          window.open(`https://www.strava.com/activities/${activityId}`, '_blank');
-        }
-      }
-    });
+  Plotly.newPlot('pace-chart', data, layoutFor(layout), PLOTLY_CONFIG).then(chart => {
+    openActivityOnClick(chart, point => point.customdata);
   });
 }
 
 function renderPaceDistribution(activities, xAxisType) {
   if (activities.length === 0) {
-    Plotly.newPlot('pace-distribution', [], { ...PLOTLY_LAYOUT_BASE }, PLOTLY_CONFIG);
+    Plotly.newPlot('pace-distribution', [], layoutFor({ ...PLOTLY_LAYOUT_BASE }), PLOTLY_CONFIG);
     return;
   }
 
@@ -746,7 +790,17 @@ function renderPaceDistribution(activities, xAxisType) {
     layout = {
       ...PLOTLY_LAYOUT_BASE,
       title: 'Run Distance Distribution',
-      xaxis: { title: 'Distance Range (miles)', gridcolor: 'lightgray', tickangle: 45 },
+      xaxis: {
+        title: 'Distance Range (miles)',
+        gridcolor: 'lightgray',
+        tickangle: isNarrow() ? 0 : 45,
+        // Naming the ticks explicitly stops Plotly thinning them, so the
+        // thinning has to be done here: roughly eight labels, lower bound only.
+        tickvals: isNarrow() ? labels : undefined,
+        ticktext: isNarrow()
+          ? labels.map((l, i) => (i % Math.ceil(labels.length / 8) ? '' : l.split('-')[0]))
+          : undefined,
+      },
       yaxis: { title: 'Number of Runs', gridcolor: 'lightgray' },
     };
   } else {
@@ -784,17 +838,28 @@ function renderPaceDistribution(activities, xAxisType) {
     layout = {
       ...PLOTLY_LAYOUT_BASE,
       title: 'Weekly Running Distance',
-      xaxis: { title: 'Week', gridcolor: 'lightgray', tickformat: '%Y-%m-%d', tickangle: 45 },
+      xaxis: {
+        title: 'Week', gridcolor: 'lightgray',
+        tickformat: isNarrow() ? '%b %-d' : '%Y-%m-%d',
+        tickangle: isNarrow() ? 0 : 45,
+      },
       yaxis: { title: 'Total Distance (miles)', gridcolor: 'lightgray' },
     };
   }
 
-  Plotly.newPlot('pace-distribution', data, layout, PLOTLY_CONFIG);
+  Plotly.newPlot('pace-distribution', data, layoutFor(layout), PLOTLY_CONFIG);
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', loadActivities);
+
+// Crossing the breakpoint changes tick labels, margins and legend placement,
+// none of which Plotly's responsive resize touches. Rotating a phone fires this
+// once, not on every intermediate width.
+NARROW.addEventListener('change', () => {
+  if (allActivities.length) renderCurrentTab();
+});
 
 // ── Training Plan ──────────────────────────────────────────────────────────────
 //
@@ -1026,14 +1091,20 @@ function renderLongRunChart(plan, byDate, today) {
       type: 'line', xref: 'paper', x0: 0, x1: 1, y0: racePaceMin, y1: racePaceMin,
       line: { color: '#999', width: 1, dash: 'dash' },
     }];
+    // Right-anchored the label sits over the peak weeks' bars, which on a phone
+    // is most of the plot; the left of the line is empty by the time it matters.
     layout.annotations = [{
-      xref: 'paper', x: 1, y: racePaceMin, xanchor: 'right', yanchor: 'bottom',
-      text: `13.1 mi at your recent pace ≈ ${Math.round(racePaceMin)} min`,
-      showarrow: false, font: { size: 11, color: '#777' },
+      xref: 'paper', y: racePaceMin, yanchor: 'bottom', showarrow: false,
+      x: isNarrow() ? 0 : 1,
+      xanchor: isNarrow() ? 'left' : 'right',
+      text: isNarrow()
+        ? `13.1 mi ≈ ${Math.round(racePaceMin)} min`
+        : `13.1 mi at your recent pace ≈ ${Math.round(racePaceMin)} min`,
+      font: { size: isNarrow() ? 10 : 11, color: '#777' },
     }];
   }
 
-  Plotly.newPlot('training-longrun', traces, layout, PLOTLY_CONFIG);
+  Plotly.newPlot('training-longrun', traces, layoutFor(layout), PLOTLY_CONFIG);
 }
 
 function renderTrainingVolume(plan, byDate, today) {
@@ -1075,10 +1146,10 @@ function renderTrainingVolume(plan, byDate, today) {
       marker: { size: 11, color: 'white', symbol: 'circle',
                 line: { color: STRAVA_ORANGE, width: 2 } },
       hovertemplate: '%{y} min so far<extra>week in progress</extra>' },
-  ], Object.assign({}, PLOTLY_LAYOUT_BASE, {
+  ], layoutFor(Object.assign({}, PLOTLY_LAYOUT_BASE, {
     yaxis: { title: 'minutes per week', rangemode: 'tozero' },
     legend: { orientation: 'h', y: -0.18 },
     margin: { t: 20, r: 20, b: 60, l: 60 },
     height: 320,
-  }), PLOTLY_CONFIG);
+  })), PLOTLY_CONFIG);
 }

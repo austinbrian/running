@@ -230,7 +230,8 @@ a:hover { text-decoration: underline; }
 }
 
 .week-chart {
-  width: 90%;
+  flex: 1;
+  min-width: 0;
   height: 150px;
 }
 
@@ -283,13 +284,6 @@ a:hover { text-decoration: underline; }
   padding: 20px 0;
   color: #828282;
   font-size: 14px;
-}
-
-@media (max-width: 600px) {
-  .site-header .wrapper { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .site-nav .page-link { margin-left: 0; margin-right: 16px; }
-  .site-nav .dropdown { margin-left: 0; margin-right: 16px; }
-  .site-nav .dropdown-menu { right: auto; left: 0; }
 }
 
 /* ── Training plan ──────────────────────────────────────────────────────────── */
@@ -408,8 +402,94 @@ a:hover { text-decoration: underline; }
   max-width: 70ch;
 }
 
+/* ── Narrow screens ─────────────────────────────────────────────────────────
+   One breakpoint for the whole page. 640px is roughly where the four tabs stop
+   fitting on a row and where a date input and a select can no longer sit side
+   by side. The charts resize continuously via Plotly's `responsive: true`, so
+   this only has to carry the layout that cannot scale — see NARROW_LAYOUT in
+   running-dashboard.js for the half of this that lives in the chart layouts. */
+
 @media (max-width: 640px) {
+  .site-header .wrapper { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .site-nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
+  .site-nav .page-link { margin-left: 0; }
+  .site-nav .dropdown { margin-left: 0; }
+  .site-nav .dropdown-menu { right: auto; left: 0; }
+
+  .running-dashboard { padding: 16px 14px; }
+  .running-dashboard h1 { font-size: 26px; }
+
+  /* The four tabs need ~440px on one row. A 2x2 grid keeps all four visible
+     rather than pushing whichever one you are not on off the edge. The rail
+     that marks the active tab has nothing to sit on once the row is gone, so
+     the tabs become filled buttons instead. */
+  .tab-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    border-bottom: none;
+    margin-bottom: 16px;
+  }
+
+  .tab-btn {
+    padding: 10px 8px;
+    margin-bottom: 0;
+    font-size: 14px;
+    background: #f8f9fa;
+    border: 1px solid #e4e6e8;
+    border-radius: 7px;
+  }
+
+  .tab-btn.active {
+    background: #FC4C02;
+    border-color: #FC4C02;
+    color: #fff;
+  }
+
+  /* Stack the filters. A date input is close to half the viewport on its own,
+     so two controls per row leaves neither of them legible. */
+  .controls { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+  .controls > label { justify-content: space-between; gap: 10px; }
+  .controls input[type="date"], .controls select { flex: 1; min-width: 0; }
+  .radio-group { flex-wrap: wrap; }
+  #target-slider { flex: 1; width: auto; min-width: 0; }
+
+  .chart-container { min-height: 300px; }
+
+  /* Three summary boxes across a phone gives each about 100px, which breaks
+     "Longest run: 2026-09-06, 9.38 mi" into a ragged column of fragments. Full
+     width instead — except the training stats, which are short enough to pair. */
+  .info-boxes { flex-direction: column; gap: 12px; }
+  .info-box { min-width: 0; padding: 12px 14px; }
+
+  #training-status {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  /* Give the week's bubbles the full width and let its total drop underneath,
+     rather than surrendering 80px of a 350px row to two lines of text. */
+  .week-chart-wrapper { flex-direction: column; align-items: stretch; }
+  .week-chart { width: 100%; height: 130px; }
+  .week-summary {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    margin-left: 0;
+    min-width: 0;
+  }
+  .summary-number { font-size: 20px; }
+  .summary-unit { font-size: 14px; }
+  .week-row hr { margin: 12px 0; }
+
   .training-day { grid-template-columns: 4.5rem 1fr; }
   .training-day .td-actual { grid-column: 2; text-align: left; }
+
+  /* Keep the step arrows flanking the pills. Left to wrap, the pill block is
+     too wide to sit beside either one and all three take a row of their own. */
+  .week-nav { flex-wrap: nowrap; align-items: flex-start; }
+  .week-pills { flex: 1; min-width: 0; }
   .week-pill, .week-step, .week-today { padding: 8px 9px; }
 }

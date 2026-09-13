@@ -130,12 +130,20 @@
         <nav class="week-nav" id="training-weeknav" aria-label="Training plan weeks"></nav>
         <p class="training-note" id="training-week-note"></p>
         <div id="training-week" class="training-week"></div>
-        <h3 class="training-heading">Long run build</h3>
+        <h3 class="training-heading">Pace at your usual effort</h3>
         <p class="training-note">
-          The long run is what the plan is really doing &mdash; everything else supports it.
-          Bars are the plan&rsquo;s target range; the line is what you actually ran longest each week.
+          Each run&rsquo;s pace scaled to your usual heart rate, so a hard day and an easy day are
+          comparable. Dots are runs; the line is the week&rsquo;s median. The band is
+          half-marathon pace &mdash; the destination, not the plan.
         </p>
-        <div id="training-longrun" class="chart-container"></div>
+        <div id="training-effort" class="chart-container"></div>
+        <h3 class="training-heading">Quality miles</h3>
+        <p class="training-note">
+          Miles inside a run at tempo pace or faster, plus miles at least 5% quicker than easy
+          that fall short of it. Strava splits by the mile, so 800&nbsp;m repeats average in with
+          their recovery jogs and land in the lighter tier. Labels are the plan&rsquo;s speed sessions.
+        </p>
+        <div id="training-quality" class="chart-container"></div>
         <h3 class="training-heading">Weekly volume</h3>
         <p class="training-note">Minutes, not miles &mdash; the plan prescribes durations, so that is the unit that can actually be over or under target.</p>
         <div id="training-volume" class="chart-container"></div>

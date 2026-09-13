@@ -107,6 +107,11 @@ const NARROW_LAYOUT = {
 function layoutFor(layout) {
   if (!isNarrow()) return layout;
   const narrow = { ...layout, ...NARROW_LAYOUT };
+  // The narrow legend replaces the whole object; an explicit trace order is
+  // about meaning, not layout, so it survives.
+  if (layout.legend?.traceorder) {
+    narrow.legend = { ...NARROW_LAYOUT.legend, traceorder: layout.legend.traceorder };
+  }
   // A layout title is either a bare string or an object; keep the text either
   // way, since spreading NARROW_LAYOUT over it would otherwise drop it.
   const title = typeof layout.title === 'string' ? layout.title : layout.title?.text;
@@ -1057,19 +1062,27 @@ function effortsOn() {
   return Boolean(document.getElementById('pace-best-efforts')?.checked);
 }
 
-async function ensureEfforts() {
-  if (effortsById || effortsState === 'loading') return;
-  effortsState = 'loading';
-  try {
-    const response = await fetch(EFFORTS_URL);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const records = await response.json();
-    effortsById = new Map(records.map(r => [r.id, r]));
-    effortsState = 'ready';
-  } catch (error) {
-    console.warn('efforts.json unavailable', error);
-    effortsState = 'failed';
+// Memoised on the promise, not the result: the Pace tab's toggle and the
+// Training tab both ask for this, and a second caller arriving mid-fetch must
+// wait for the same request rather than see a null map and give up.
+let effortsPromise = null;
+function ensureEfforts() {
+  if (!effortsPromise) {
+    effortsState = 'loading';
+    effortsPromise = (async () => {
+      try {
+        const response = await fetch(EFFORTS_URL);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const records = await response.json();
+        effortsById = new Map(records.map(r => [r.id, r]));
+        effortsState = 'ready';
+      } catch (error) {
+        console.warn('efforts.json unavailable', error);
+        effortsState = 'failed';
+      }
+    })();
   }
+  return effortsPromise;
 }
 
 // One row per (run, distance). A run contributes several, and they are nested —
@@ -1566,9 +1579,17 @@ async function renderTraining() {
 
   renderWeekNav(plan, currentWeek, shownWeek);
   renderWeekTable(plan, byDate, today, currentWeek, shownWeek);
-
-  renderLongRunChart(plan, byDate, today);
+  renderEffortChart(plan, byDate, today);
   renderTrainingVolume(plan, byDate, today);
+
+  // Splits (~1 MB) feed the quality chart and the long-run drift. Everything
+  // else is drawn first, so a slow fetch holds up one chart and one number.
+  renderQualityChart(plan, byDate, today);
+  const hadEfforts = Boolean(effortsById);
+  await ensureEfforts();
+  if (hadEfforts) return;
+  if (effortsById) renderWeekTable(plan, byDate, today, currentWeek, shownWeek);
+  renderQualityChart(plan, byDate, today);
 }
 
 // The week strip. Marks the current week so jumping away and back is easy, and
@@ -1619,6 +1640,7 @@ function renderWeekTable(plan, byDate, today, currentWeek, shownWeek) {
     if (runs.length) {
       state = isRest ? 'extra' : 'done';
       label = `${miles.toFixed(1)} mi &middot; ${Math.round(mins)} min`;
+      if (w.type.includes('Long')) label += driftMarkup(runs);
     } else if (isRest) {
       state = 'rest'; label = 'rest';
     } else if (past) {
@@ -1672,70 +1694,268 @@ function esc(str) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-function renderLongRunChart(plan, byDate, today) {
-  const weeks = [], base = [], span = [], actual = [];
+// Optical-HR artifact bounds, mirroring HR_FLOOR / HR_CEILING in zones.py.
+const HR_MIN = 90, HR_MAX = 195;
+// A weekly median of one run is that run; two is the least worth drawing.
+const EFFORT_WEEK_MIN_RUNS = 2;
+// A run's last split is a fraction of a mile. Half a mile is enough to carry a
+// pace worth counting; anything shorter is a few strides to the door.
+const MIN_SPLIT_MILES = 0.5;
+// Halves of at least two miles each, or the drift is noise.
+const DRIFT_MIN_SPLITS = 4;
+const DRIFT_HELD_PCT = 5;
+// How much quicker than the easy zone a mile must be to count as work rather
+// than a good day. The same 5% zones.py demands before it will call an effort
+// an anchor; the easy zone's fast edge is a percentile, so on its own a quarter
+// of all miles would clear it.
+const QUALITY_MARGIN = 0.05;
+
+function validHr(bpm) {
+  return Boolean(bpm) && bpm > HR_MIN && bpm < HR_MAX;
+}
+
+function usableSplits(record) {
+  return ((record && record.splits) || [])
+    .filter(sp => sp.mi >= MIN_SPLIT_MILES && sp.s > 0);
+}
+
+// Aerobic decoupling: pace-per-heartbeat in the second half of a run against
+// the first, as a percentage lost. Under about 5% the effort held; above it
+// the same pace was costing more by the end. Null when the run is too short
+// or its heart rate is missing.
+function decouplingPct(record) {
+  const splits = usableSplits(record).filter(sp => validHr(sp.hr));
+  if (splits.length < DRIFT_MIN_SPLITS) return null;
+  const half = Math.floor(splits.length / 2);
+  const efficiency = part => {
+    const miles = part.reduce((t, sp) => t + sp.mi, 0);
+    const seconds = part.reduce((t, sp) => t + sp.s, 0);
+    const hr = part.reduce((t, sp) => t + sp.hr * sp.mi, 0) / miles;
+    return (miles / seconds) / hr;
+  };
+  const first = efficiency(splits.slice(0, half));
+  const second = efficiency(splits.slice(half));
+  return (first - second) / first * 100;
+}
+
+function driftMarkup(runs) {
+  if (!effortsById) return '';
+  // The day's longest run is the long run; a shakeout on the same day is not.
+  const longest = runs.reduce((best, r) =>
+    (r.moving_time_minutes || 0) > (best.moving_time_minutes || 0) ? r : best, runs[0]);
+  const drift = decouplingPct(effortsById.get(longest.id));
+  if (drift === null) return '';
+  const high = drift > DRIFT_HELD_PCT;
+  const title = high
+    ? `Pace per heartbeat fell ${drift.toFixed(1)}% from the first half to the second. `
+      + `Under ${DRIFT_HELD_PCT}% and the effort held; this one slid.`
+    : `Pace per heartbeat fell ${drift.toFixed(1)}% from the first half to the second, `
+      + `under the ${DRIFT_HELD_PCT}% that says the effort held.`;
+  return `<span class="td-drift${high ? ' td-drift-high' : ''}" title="${esc(title)}">`
+    + `${drift.toFixed(1)}% drift</span>`;
+}
+
+// One entry per plan week: its label, its days, and how many have passed.
+function planWeeks(plan, today) {
+  const out = [];
   for (let w = 1; w <= plan.weeks; w++) {
     const days = plan.workouts.filter(x => x.week === w);
-    const long = days.find(x => x.type.includes('Long'));
-    weeks.push(`W${w}`);
-    // One floating bar per week (base = plan minimum, height = the range) reads as a
-    // single band. Stacking two traces made the legend claim two separate series.
-    base.push(long ? long.min_minutes : 0);
-    span.push(long ? long.max_minutes - long.min_minutes : 0);
+    out.push({ n: w, label: `W${w}`, days, elapsed: days.filter(d => d.date <= today).length });
+  }
+  return out;
+}
 
-    let best = 0;
-    days.forEach(d => (byDate[d.date] || []).forEach(r => {
-      if (d.date <= today) best = Math.max(best, r.moving_time_minutes || 0);
-    }));
-    actual.push(best || null);
+function chartMessage(id, html) {
+  const el = document.getElementById(id);
+  Plotly.purge(el);
+  el.innerHTML = `<p class="training-note">${html}</p>`;
+}
+
+// Plotly draws beside whatever is already in the container, so a message left
+// by an earlier render has to go before the plot does.
+function plotInto(id, traces, layout) {
+  const el = document.getElementById(id);
+  el.innerHTML = '';
+  Plotly.newPlot(el, traces, layoutFor(layout), PLOTLY_CONFIG);
+}
+
+// Pace at the reference heart rate, by plan week. Same normalisation as the
+// Pace tab's efficiency chart, framed against the plan and the goal: the half
+// marathon band is where the weekly median needs to arrive, not what the plan
+// asked for this week.
+function renderEffortChart(plan, byDate, today) {
+  const fit = zonesDoc && zonesDoc.hr;
+  if (!fit || !fit.reference_bpm) {
+    chartMessage('training-effort', 'No heart-rate reference published yet &mdash; '
+      + '<code>zones.json</code> is written by the sync workflow.');
+    return;
   }
 
-  // Race-day effort, for scale. This used to be total minutes over total miles
-  // since 2026-06-01, times 13.1 — every easy shakeout weighted equally with
-  // every long run and no distance decay at all, which read as a prediction and
-  // was not one. It now comes from zones.json, Riegel-extrapolated from the
-  // anchoring effort, and is simply absent when there is no anchor.
-  const predictedHalfS = zonesDoc && zonesDoc.predicted_s && zonesDoc.predicted_s.half;
-  const racePaceMin = predictedHalfS ? predictedHalfS / 60 : null;
+  const dotX = [], dotY = [], dotText = [];
+  const medX = [], medY = [], partX = [], partY = [];
+  planWeeks(plan, today).forEach(week => {
+    const runs = [];
+    week.days.forEach(d => {
+      if (d.date > today) return;
+      (byDate[d.date] || []).forEach(r => {
+        if (!validHr(r.average_heartrate)) return;
+        runs.push({ y: hrAdjustedPaceMin(r), raw: rawPaceMin(r),
+                    hr: r.average_heartrate, name: r.name, day: d.date });
+      });
+    });
+    // Spread a week's dots across its column so five easy runs at the same
+    // pace read as five, not one.
+    runs.forEach((r, i) => {
+      dotX.push(week.n + (i - (runs.length - 1) / 2) * 0.09);
+      dotY.push(r.y);
+      dotText.push(`<b>${esc(r.name)}</b><br>Actual: ${formatPace(r.raw)}/mi at `
+        + `${Math.round(r.hr)} bpm<br>At ${fit.reference_bpm} bpm: ${formatPace(r.y)}/mi`
+        + `<br>${r.day}`);
+    });
+    if (runs.length < EFFORT_WEEK_MIN_RUNS) return;
+    const med = median(runs.map(r => r.y));
+    if (week.elapsed < 7) { partX.push(week.n); partY.push(med); }
+    else { medX.push(week.n); medY.push(med); }
+  });
 
+  if (!dotY.length) {
+    chartMessage('training-effort', 'No runs with heart rate in the plan yet.');
+    return;
+  }
+
+  const half = zone('half_marathon');
+  const bandLo = half ? half.low_s / 60 : null, bandHi = half ? half.high_s / 60 : null;
+  const all = [...dotY, ...(half ? [bandLo, bandHi] : [])];
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const pad = Math.max((hi - lo) * 0.1, 0.15);
+
+  const weeks = planWeeks(plan, today);
   const traces = [
-    { x: weeks, y: span, base: base, type: 'bar', name: 'plan target range',
-      marker: { color: 'rgba(252,76,2,0.30)', line: { color: 'rgba(252,76,2,0.55)', width: 1 } },
-      hovertemplate: '%{base}–%{customdata} min<extra>plan</extra>',
-      customdata: base.map((b, i) => b + span[i]) },
-    { x: weeks, y: actual, type: 'scatter', mode: 'lines+markers', name: 'your longest run',
-      connectgaps: false, line: { color: DARK_BLUE, width: 2 },
-      marker: { size: 10, color: DARK_BLUE },
-      hovertemplate: '%{y} min<extra>actual</extra>' },
+    { x: dotX, y: dotY, type: 'scatter', mode: 'markers', name: 'per run',
+      marker: { size: 7, color: BURNT_ORANGE, opacity: 0.45 },
+      text: dotText, hoverinfo: 'text' },
+    { x: medX, y: medY, type: 'scatter', mode: 'lines+markers', name: 'weekly median',
+      line: { color: DARK_BLUE, width: 2 }, marker: { size: 9, color: DARK_BLUE },
+      hovertemplate: `%{y:.2f} min/mi at ${fit.reference_bpm} bpm<extra>completed week</extra>` },
+    { x: partX, y: partY, type: 'scatter', mode: 'markers', name: 'this week so far',
+      marker: { size: 11, color: 'white', line: { color: DARK_BLUE, width: 2 } },
+      hovertemplate: '%{y:.2f} min/mi so far<extra>week in progress</extra>' },
   ];
 
   const layout = Object.assign({}, PLOTLY_LAYOUT_BASE, {
-    yaxis: { title: 'minutes', rangemode: 'tozero' },
-    xaxis: { title: '' },
+    xaxis: { title: '', tickvals: weeks.map(w => w.n), ticktext: weeks.map(w => w.label),
+             range: [0.4, plan.weeks + 0.6], zeroline: false },
+    // Descending, so up is faster — matching the pace charts.
+    yaxis: { title: `Pace at ${fit.reference_bpm} bpm`, range: [hi + pad, lo - pad],
+             gridcolor: 'lightgray' },
     legend: { orientation: 'h', y: -0.18 },
-    margin: { t: 20, r: 20, b: 60, l: 55 },
+    margin: { t: 20, r: 20, b: 60, l: 60 },
     height: 340,
   });
+  // Y ticks read as minutes:seconds, not decimal minutes.
+  const ticks = [];
+  for (let m = Math.ceil((lo - pad) * 4) / 4; m <= hi + pad; m += 0.25) ticks.push(m);
+  layout.yaxis.tickvals = ticks;
+  layout.yaxis.ticktext = ticks.map(formatPace);
 
-  if (racePaceMin) {
+  if (half) {
     layout.shapes = [{
-      type: 'line', xref: 'paper', x0: 0, x1: 1, y0: racePaceMin, y1: racePaceMin,
-      line: { color: '#999', width: 1, dash: 'dash' },
+      type: 'rect', xref: 'paper', x0: 0, x1: 1, y0: bandLo, y1: bandHi, layer: 'below',
+      fillcolor: 'rgba(252,76,2,0.14)', line: { width: 0 },
     }];
-    // Right-anchored the label sits over the peak weeks' bars, which on a phone
-    // is most of the plot; the left of the line is empty by the time it matters.
     layout.annotations = [{
-      xref: 'paper', y: racePaceMin, yanchor: 'bottom', showarrow: false,
-      x: isNarrow() ? 0 : 1,
-      xanchor: isNarrow() ? 'left' : 'right',
-      text: isNarrow()
-        ? `13.1 mi ≈ ${Math.round(racePaceMin)} min`
-        : `predicted half marathon ≈ ${Math.round(racePaceMin)} min`,
+      xref: 'paper', x: 0, xanchor: 'left', y: bandLo, yanchor: 'bottom', showarrow: false,
+      text: isNarrow() ? `half ${zoneRange('half_marathon')}` : `half-marathon pace ${zoneRange('half_marathon')}`,
       font: { size: isNarrow() ? 10 : 11, color: '#777' },
     }];
   }
 
-  Plotly.newPlot('training-longrun', traces, layoutFor(layout), PLOTLY_CONFIG);
+  plotInto('training-effort', traces, layout);
+}
+
+// Plan sessions that ask for something faster than easy, and the short name
+// they get above the week's bar.
+const QUALITY_SESSION_LABELS = {
+  'Tempo Intervals': 'tempo', 'Cruise Intervals': 'cruise', 'Fartlek Run': 'fartlek',
+  'Progression Run': 'progression', 'Fast Finish Long Run': 'fast finish',
+};
+
+// Miles run at speed, per plan week, from Strava's mile splits. Two tiers: at
+// tempo pace or faster, and clearly quicker than easy without reaching tempo.
+// The second exists because a mile split averages an 800 m repeat with its
+// recovery jog — a cruise session lands there, not in the first.
+function renderQualityChart(plan, byDate, today) {
+  if (effortsState !== 'ready') {
+    chartMessage('training-quality', effortsState === 'failed'
+      ? 'Could not load the mile splits (<code>efforts.json</code>).'
+      : 'Loading mile splits&hellip;');
+    return;
+  }
+  const tempo = zone('tempo_interval'), easy = zone('easy');
+  if (!easy) {
+    chartMessage('training-quality', 'No easy pace derived yet, so there is nothing to be '
+      + 'faster than &mdash; <code>zones.json</code> is written by the sync workflow.');
+    return;
+  }
+  const tempoHiS = tempo ? tempo.high_s : null;
+  const briskS = easy.low_s * (1 - QUALITY_MARGIN);
+
+  const weeks = planWeeks(plan, today);
+  const labels = weeks.map(w => w.label);
+  const fast = [], brisk = [], hover = [], sessions = [];
+  weeks.forEach(week => {
+    let atTempo = 0, aboveEasy = 0;
+    week.days.forEach(d => {
+      if (d.date > today) return;
+      (byDate[d.date] || []).forEach(r => {
+        usableSplits(effortsById.get(r.id)).forEach(sp => {
+          const paceS = sp.s / sp.mi;
+          if (tempoHiS !== null && paceS <= tempoHiS) atTempo += sp.mi;
+          else if (paceS <= briskS) aboveEasy += sp.mi;
+        });
+      });
+    });
+    const planned = week.days.map(d => QUALITY_SESSION_LABELS[d.type]).filter(Boolean);
+    sessions.push(planned.join(' + '));
+    fast.push(week.elapsed ? atTempo : null);
+    brisk.push(week.elapsed ? aboveEasy : null);
+    const state = week.elapsed === 0 ? 'ahead' : week.elapsed < 7 ? 'so far' : 'week';
+    hover.push(`${tempoHiS !== null ? `${atTempo.toFixed(1)} mi at tempo or faster<br>` : ''}`
+      + `${aboveEasy.toFixed(1)} mi quicker than easy${tempoHiS !== null ? ', short of tempo' : ''}`
+      + `<br>plan: ${planned.length ? planned.join(', ') : 'no speed session'}`
+      + `<extra>${state}</extra>`);
+  });
+
+  const traces = [];
+  if (tempoHiS !== null) {
+    traces.push({ x: labels, y: fast, type: 'bar', name: `at tempo or faster (${formatPace(tempoHiS / 60)})`,
+      marker: { color: STRAVA_ORANGE }, hovertemplate: hover });
+  }
+  traces.push({ x: labels, y: brisk, type: 'bar',
+    name: `quicker than easy (under ${formatPace(briskS / 60)})${tempoHiS !== null ? ', short of tempo' : ''}`,
+    marker: { color: 'rgba(252,76,2,0.35)' }, hovertemplate: hover });
+
+  const layout = Object.assign({}, PLOTLY_LAYOUT_BASE, {
+    barmode: 'stack',
+    xaxis: { title: '', zeroline: false },
+    yaxis: { title: 'miles', rangemode: 'tozero', gridcolor: 'lightgray' },
+    legend: { orientation: 'h', y: -0.18, traceorder: 'normal' },
+    margin: { t: 24, r: 20, b: 60, l: 50 },
+    height: 320,
+  });
+  // The plan's ask, above each bar. Hidden on a phone, where ten columns leave
+  // no room for a word; the hover still carries it.
+  if (!isNarrow()) {
+    const tops = fast.map((f, i) => (f || 0) + (brisk[i] || 0));
+    const ceiling = Math.max(1, ...tops);
+    layout.yaxis.range = [0, ceiling * 1.25];
+    layout.annotations = sessions.map((label, i) => label ? {
+      x: labels[i], y: tops[i], yanchor: 'bottom', yshift: 4, showarrow: false,
+      text: label, font: { size: 10, color: '#777' },
+    } : null).filter(Boolean);
+  }
+
+  plotInto('training-quality', traces, layout);
 }
 
 function renderTrainingVolume(plan, byDate, today) {

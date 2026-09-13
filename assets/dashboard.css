@@ -422,6 +422,10 @@ a:hover { text-decoration: underline; }
 .training-day.missed .td-actual { color: #c0392b; }
 .training-day.extra  { border-left-color: #E67E22; }
 .training-day.extra .td-actual { color: #E67E22; }
+/* Second line under a long run's actual: how much pace-per-heartbeat fell off
+   between its halves. Held (under 5%) stays quiet; a slide gets the amber. */
+.training-day .td-drift { display: block; font-size: 12px; font-weight: normal; color: #666; }
+.training-day .td-drift-high { color: #E67E22; }
 .training-day.rest   { opacity: .65; }
 .training-day.today  { background: #fff4ef; box-shadow: inset 0 0 0 1px rgba(252,76,2,.35); }
 

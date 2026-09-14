@@ -1814,7 +1814,7 @@ function renderEffortChart(plan, byDate, today) {
     });
     if (runs.length < EFFORT_WEEK_MIN_RUNS) return;
     const med = median(runs.map(r => r.y));
-    if (week.elapsed < 7) { partX.push(week.n); partY.push(med); }
+    if (week.elapsed < week.days.length) { partX.push(week.n); partY.push(med); }
     else { medX.push(week.n); medY.push(med); }
   });
 
@@ -1919,7 +1919,7 @@ function renderQualityChart(plan, byDate, today) {
     sessions.push(planned.join(' + '));
     fast.push(week.elapsed ? atTempo : null);
     brisk.push(week.elapsed ? aboveEasy : null);
-    const state = week.elapsed === 0 ? 'ahead' : week.elapsed < 7 ? 'so far' : 'week';
+    const state = week.elapsed === 0 ? 'ahead' : week.elapsed < week.days.length ? 'so far' : 'week';
     hover.push(`${tempoHiS !== null ? `${atTempo.toFixed(1)} mi at tempo or faster<br>` : ''}`
       + `${aboveEasy.toFixed(1)} mi quicker than easy${tempoHiS !== null ? ', short of tempo' : ''}`
       + `<br>plan: ${planned.length ? planned.join(', ') : 'no speed session'}`
@@ -1973,8 +1973,11 @@ function renderTrainingVolume(plan, byDate, today) {
     });
     // A week still in progress cannot be compared to a weekly target — plotting
     // Monday's partial as if it were the week's total reads as a collapse.
+    // Against the week's own length, not 7: race week is six days, because the
+    // plan's Sunday race day moved to Saturday and the shakeout it displaced is
+    // gone. A hardcoded 7 would leave the last week forever unfinished.
     if (elapsed === 0) { mins.push(null); partial.push(null); }
-    else if (elapsed < 7) { mins.push(null); partial.push(Math.round(total)); }
+    else if (elapsed < days.length) { mins.push(null); partial.push(Math.round(total)); }
     else { mins.push(Math.round(total)); partial.push(null); }
 
     // The plan's weekly ask, summed from its per-session ranges.

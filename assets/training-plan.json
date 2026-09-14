@@ -759,17 +759,6 @@
       "date": "2026-10-24",
       "week": 10,
       "day_name": "Saturday",
-      "type": "Easy Run",
-      "duration": "30m",
-      "min_minutes": 30,
-      "max_minutes": 30,
-      "prescription": "",
-      "goal": "Just an easy run to loosen up for the race."
-    },
-    {
-      "date": "2026-10-25",
-      "week": 10,
-      "day_name": "Sunday",
       "type": "Race Day",
       "duration": "13.1 mi",
       "min_minutes": 1,

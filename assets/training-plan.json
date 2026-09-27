@@ -473,23 +473,23 @@
       "date": "2026-09-28",
       "week": 7,
       "day_name": "Monday",
-      "type": "Rest Day",
-      "duration": "",
-      "min_minutes": 0,
-      "max_minutes": 0,
-      "prescription": "",
-      "goal": "Today begins your second recovery week. As with the first one four weeks ago, the mileage will be reduced as we allow the body and mind to rejuvenate for the final few weeks before the race. Take today completely off. No exercise."
-    },
-    {
-      "date": "2026-09-29",
-      "week": 7,
-      "day_name": "Tuesday",
       "type": "Easy Run",
       "duration": "40m - 1h",
       "min_minutes": 40,
       "max_minutes": 60,
       "prescription": "",
       "goal": "More endurance base provides the strength you need in the race."
+    },
+    {
+      "date": "2026-09-29",
+      "week": 7,
+      "day_name": "Tuesday",
+      "type": "Tempo Intervals",
+      "duration": "50m - 1h 10m",
+      "min_minutes": 50,
+      "max_minutes": 70,
+      "prescription": "Include 2-3 x 2 miles at Tempo Interval Pace, 4 minute recovery jog between each repetition; include a warm-up and cool-down",
+      "goal": "This is a gut check workout. You will need to bring your mental A game to this one. This last rep will be tough but you can do it."
     },
     {
       "date": "2026-09-30",
@@ -506,28 +506,6 @@
       "date": "2026-10-01",
       "week": 7,
       "day_name": "Thursday",
-      "type": "Tempo Intervals",
-      "duration": "50m - 1h 10m",
-      "min_minutes": 50,
-      "max_minutes": 70,
-      "prescription": "Include 2-3 x 2 miles at Tempo Interval Pace, 4 minute recovery jog between each repetition; include a warm-up and cool-down",
-      "goal": "This is a gut check workout. You will need to bring your mental A game to this one. This last rep will be tough but you can do it."
-    },
-    {
-      "date": "2026-10-02",
-      "week": 7,
-      "day_name": "Friday",
-      "type": "Rest Day",
-      "duration": "",
-      "min_minutes": 0,
-      "max_minutes": 0,
-      "prescription": "",
-      "goal": "Take the day off completely."
-    },
-    {
-      "date": "2026-10-03",
-      "week": 7,
-      "day_name": "Saturday",
       "type": "Easy Run",
       "duration": "30m - 45m",
       "min_minutes": 30,
@@ -536,9 +514,9 @@
       "goal": "Cross-train or do an easy run for 30-45 minutes today."
     },
     {
-      "date": "2026-10-04",
+      "date": "2026-10-02",
       "week": 7,
-      "day_name": "Sunday",
+      "day_name": "Friday",
       "type": "Fast Finish Long Run",
       "duration": "1h 45m - 2h",
       "min_minutes": 105,
@@ -547,26 +525,48 @@
       "goal": "Today is your first big Fast Finish Long Run. Get in 12-14 total miles. Don't leave your race in this run. Focus more on cruising along at goal pace for the middle portion of your run and run fast at the end but don't race this workout."
     },
     {
-      "date": "2026-10-05",
-      "week": 8,
-      "day_name": "Monday",
+      "date": "2026-10-03",
+      "week": 7,
+      "day_name": "Saturday",
       "type": "Rest Day",
       "duration": "",
       "min_minutes": 0,
       "max_minutes": 0,
       "prescription": "",
-      "goal": "Recovery day. No exercise."
+      "goal": "Today begins your second recovery week. As with the first one four weeks ago, the mileage will be reduced as we allow the body and mind to rejuvenate for the final few weeks before the race. Take today completely off. No exercise."
     },
     {
-      "date": "2026-10-06",
+      "date": "2026-10-04",
+      "week": 7,
+      "day_name": "Sunday",
+      "type": "Rest Day",
+      "duration": "",
+      "min_minutes": 0,
+      "max_minutes": 0,
+      "prescription": "",
+      "goal": "Take the day off completely."
+    },
+    {
+      "date": "2026-10-05",
       "week": 8,
-      "day_name": "Tuesday",
+      "day_name": "Monday",
       "type": "Easy Run",
       "duration": "1h 20m - 1h 40m",
       "min_minutes": 80,
       "max_minutes": 100,
       "prescription": "",
       "goal": "Nice longer run to finish off your endurance training as the race nears."
+    },
+    {
+      "date": "2026-10-06",
+      "week": 8,
+      "day_name": "Tuesday",
+      "type": "Fartlek Run",
+      "duration": "50m - 1h 10m",
+      "min_minutes": 50,
+      "max_minutes": 70,
+      "prescription": "Include 10-12 x 1 minute at 5K-10K effort, 1 minute recovery jog between each repetition; include a warm-up and cool-down",
+      "goal": "Another pace change workout to build mental toughness."
     },
     {
       "date": "2026-10-07",
@@ -583,28 +583,6 @@
       "date": "2026-10-08",
       "week": 8,
       "day_name": "Thursday",
-      "type": "Fartlek Run",
-      "duration": "50m - 1h 10m",
-      "min_minutes": 50,
-      "max_minutes": 70,
-      "prescription": "Include 10-12 x 1 minute at 5K-10K effort, 1 minute recovery jog between each repetition; include a warm-up and cool-down",
-      "goal": "Another pace change workout to build mental toughness."
-    },
-    {
-      "date": "2026-10-09",
-      "week": 8,
-      "day_name": "Friday",
-      "type": "Rest Day",
-      "duration": "",
-      "min_minutes": 0,
-      "max_minutes": 0,
-      "prescription": "",
-      "goal": "Take the day off completely or you may cross-train for 40-60 minutes"
-    },
-    {
-      "date": "2026-10-10",
-      "week": 8,
-      "day_name": "Saturday",
       "type": "Easy Run",
       "duration": "30m - 45m",
       "min_minutes": 30,
@@ -613,9 +591,9 @@
       "goal": "Cross-train or do an easy run for 30-45 minutes today."
     },
     {
-      "date": "2026-10-11",
+      "date": "2026-10-09",
       "week": 8,
-      "day_name": "Sunday",
+      "day_name": "Friday",
       "type": "Fast Finish Long Run",
       "duration": "1h 45m - 2h",
       "min_minutes": 105,
@@ -624,26 +602,48 @@
       "goal": "Today is another Fast Finish Long Run. Get in 12-14 total miles. Don't leave your race in this run. Focus more on cruising along at goal pace for the middle portion of your run and run fast at the end but don't race this workout."
     },
     {
-      "date": "2026-10-12",
-      "week": 9,
-      "day_name": "Monday",
+      "date": "2026-10-10",
+      "week": 8,
+      "day_name": "Saturday",
       "type": "Rest Day",
       "duration": "",
       "min_minutes": 0,
       "max_minutes": 0,
       "prescription": "",
-      "goal": "To kick off your peaking phase, take today completely off so you fully recover from yesterday's long run."
+      "goal": "Recovery day. No exercise."
     },
     {
-      "date": "2026-10-13",
+      "date": "2026-10-11",
+      "week": 8,
+      "day_name": "Sunday",
+      "type": "Rest Day",
+      "duration": "",
+      "min_minutes": 0,
+      "max_minutes": 0,
+      "prescription": "",
+      "goal": "Take the day off completely or you may cross-train for 40-60 minutes"
+    },
+    {
+      "date": "2026-10-12",
       "week": 9,
-      "day_name": "Tuesday",
+      "day_name": "Monday",
       "type": "Easy Run",
       "duration": "30m - 40m",
       "min_minutes": 30,
       "max_minutes": 40,
       "prescription": "",
       "goal": "If you are feeling good, include some pace change within the run. If you feel you need more recovery, then skip the pace change and just run easy."
+    },
+    {
+      "date": "2026-10-13",
+      "week": 9,
+      "day_name": "Tuesday",
+      "type": "Tempo Intervals",
+      "duration": "1h - 1h 20m",
+      "min_minutes": 60,
+      "max_minutes": 80,
+      "prescription": "Include 3 x 2 miles at Tempo Interval Pace, 4 minute recovery jog between each repetition; include a warm-up and cool-down",
+      "goal": "The goal for today is to see just how relaxed you can run Tempo Interval Pace. This isn't a fitness building workout but more of a fitness refining workout."
     },
     {
       "date": "2026-10-14",
@@ -660,28 +660,6 @@
       "date": "2026-10-15",
       "week": 9,
       "day_name": "Thursday",
-      "type": "Tempo Intervals",
-      "duration": "1h - 1h 20m",
-      "min_minutes": 60,
-      "max_minutes": 80,
-      "prescription": "Include 3 x 2 miles at Tempo Interval Pace, 4 minute recovery jog between each repetition; include a warm-up and cool-down",
-      "goal": "The goal for today is to see just how relaxed you can run Tempo Interval Pace. This isn't a fitness building workout but more of a fitness refining workout."
-    },
-    {
-      "date": "2026-10-16",
-      "week": 9,
-      "day_name": "Friday",
-      "type": "Rest Day",
-      "duration": "",
-      "min_minutes": 0,
-      "max_minutes": 0,
-      "prescription": "",
-      "goal": "Take the day off completely or you may cross-train for 30-40 minutes"
-    },
-    {
-      "date": "2026-10-17",
-      "week": 9,
-      "day_name": "Saturday",
       "type": "Easy Run",
       "duration": "30m - 45m",
       "min_minutes": 30,
@@ -690,15 +668,37 @@
       "goal": "Cross-train or do an easy run for 30-45 minutes today."
     },
     {
-      "date": "2026-10-18",
+      "date": "2026-10-16",
       "week": 9,
-      "day_name": "Sunday",
+      "day_name": "Friday",
       "type": "Long Run",
       "duration": "1h 30m - 1h 45m",
       "min_minutes": 90,
       "max_minutes": 105,
       "prescription": "",
       "goal": "This is the final long run in your plan. Run easy and enjoy all the fitness you've built."
+    },
+    {
+      "date": "2026-10-17",
+      "week": 9,
+      "day_name": "Saturday",
+      "type": "Rest Day",
+      "duration": "",
+      "min_minutes": 0,
+      "max_minutes": 0,
+      "prescription": "",
+      "goal": "To kick off your peaking phase, take today completely off so you fully recover from yesterday's long run."
+    },
+    {
+      "date": "2026-10-18",
+      "week": 9,
+      "day_name": "Sunday",
+      "type": "Rest Day",
+      "duration": "",
+      "min_minutes": 0,
+      "max_minutes": 0,
+      "prescription": "",
+      "goal": "Take the day off completely or you may cross-train for 30-40 minutes"
     },
     {
       "date": "2026-10-19",
